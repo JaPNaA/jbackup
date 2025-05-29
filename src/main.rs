@@ -35,19 +35,22 @@ fn main() {
     }
 }
 
-fn init_repo() -> io::Result<()> {
-    fs::create_dir(".jbackup")?;
+fn init_repo() -> Result<(), String> {
+    simplify_result(fs::create_dir(".jbackup"))?;
 
-    let initial_branches = BranchesFile {
+    write_branches(&BranchesFile {
         branches: {
             let mut branches: HashMap<String, Option<String>> = HashMap::new();
             branches.insert(String::from("main"), None);
             branches
         },
-    };
+    })?;
 
-    fs::write(".jbackup/branches", initial_branches.to_string())?;
-    fs::write(".jbackup/head", "NULL")?;
+    write_head(&HeadFile {
+        curr_snapshot_id: None,
+        curr_branch: String::from("main"),
+    })?;
+
     println!("Successfully initalized jbackup in the current working directory.");
     Ok(())
 }
@@ -70,14 +73,25 @@ fn snapshot_repo() -> Result<(), String> {
     let new_id = create_full_snapshot()?;
     print!("Created snapshot with id: {}", new_id);
 
-    let head_tar_path = get_head_tar();
+    let mut head_file = read_head()?;
+    let mut branch_file = read_branches()?;
 
-    // match head_tar_path {
-    //     None => {
-    //         // first commit
-    //         //
-    //     }
-    // }
+    let head_tar_path = get_head_tar(&head_file)?;
+
+    match head_tar_path {
+        None => {
+            head_file.curr_snapshot_id = Some(new_id.clone());
+            branch_file
+                .branches
+                .insert(head_file.curr_branch.clone(), Some(new_id));
+        }
+        Some(p) => {
+            todo!();
+        }
+    }
+
+    write_head(&head_file)?;
+    write_branches(&branch_file)?;
 
     Ok(())
 }
@@ -193,7 +207,10 @@ fn commit_tmp_snapshot(tmp_snapshot_path: &String, data: SnapshotMetaFile) -> Re
 
     let snapshot_path = String::from("./.jbackup/snapshots/") + &data.id;
 
-    simplify_result(fs::rename(tmp_snapshot_path, &snapshot_path))?;
+    simplify_result(fs::rename(
+        tmp_snapshot_path,
+        String::clone(&snapshot_path) + "-" + data.snapshot_type.to_string().as_str(),
+    ))?;
     simplify_result(fs::write(snapshot_path + ".meta", data.to_string()))?;
     Ok(())
 }
@@ -213,12 +230,25 @@ fn ensure_snapshots_directory_exists() -> Result<(), String> {
 }
 
 /// Retrieves the tar file for HEAD and returns the path
-fn get_head_tar() -> Result<Option<String>, String> {
+fn get_head_tar(head_file: &HeadFile) -> Result<Option<String>, String> {
     Ok(None)
+}
+
+fn write_branches(branches: &BranchesFile) -> Result<(), String> {
+    simplify_result(fs::write(".jbackup/branches", branches.to_string()))
+}
+
+fn write_head(head: &HeadFile) -> Result<(), String> {
+    simplify_result(fs::write(".jbackup/head", head.to_string()))
 }
 
 struct BranchesFile {
     branches: HashMap<String, Option<String>>,
+}
+
+struct HeadFile {
+    curr_snapshot_id: Option<String>,
+    curr_branch: String,
 }
 
 struct SnapshotMetaFile {
@@ -249,13 +279,91 @@ impl ToString for BranchesFile {
             result.push('\t');
             result.push_str(match item.1 {
                 None => "NULL",
-                Some(x) => x,
+                Some(s) => s,
             });
             result.push('\n');
         }
 
         result
     }
+}
+
+fn read_branches() -> Result<BranchesFile, String> {
+    Ok(BranchesFile {
+        branches: read_simple_tab_separated_file("./.jbackup/branches")?,
+    })
+}
+
+impl ToString for HeadFile {
+    fn to_string(&self) -> String {
+        let mut result = String::new();
+        result.push_str("snapshotid\t");
+        result.push_str(match &self.curr_snapshot_id {
+            None => "NULL",
+            Some(s) => s,
+        });
+        result.push_str("\nbranch\t");
+        result.push_str(&self.curr_branch);
+        result.push('\n');
+        return result;
+    }
+}
+
+fn read_head() -> Result<HeadFile, String> {
+    let map = read_simple_tab_separated_file("./.jbackup/head")?;
+    let curr_snapshot_id = map.get("snapshotid");
+    let curr_branch = map.get("branch");
+    if curr_branch.is_none() || curr_snapshot_id.is_none() {
+        return Err(String::from(
+            "The head file is missing required values (snapshotid, branch)",
+        ));
+    }
+
+    Ok(HeadFile {
+        curr_snapshot_id: curr_snapshot_id
+            .expect("snapshot id should have been validated to have a value")
+            .clone(),
+        curr_branch: curr_branch
+            .expect("branch should have been validated to have a value")
+            .clone()
+            .expect("branch should not be NULL")
+            .clone(),
+    })
+}
+
+/// Reads a simple tab separated file and inserts the key/value pairs in a
+/// HashMap.
+///
+/// Simple tab separated files:
+///   - do not contain '\n' in the value
+///   - do not contain '\t' or '\n' in the key
+///   - do not contain multiple values for the same key
+///   - if the value is exactly "NULL", then the value is stored as None
+fn read_simple_tab_separated_file(path: &str) -> Result<HashMap<String, Option<String>>, String> {
+    let data = simplify_result(String::from_utf8(simplify_result(fs::read(path))?))?;
+
+    let mut map: HashMap<String, Option<String>> = HashMap::new();
+
+    for line in data.split('\n') {
+        if line.is_empty() {
+            continue;
+        }
+
+        match line.find('\t') {
+            None => return Err(format!("File '{path}' is corrupted")),
+            Some(i) => {
+                let key = line[..i].to_string();
+                let val = &line[i + 1..];
+                if val == "NULL" {
+                    map.insert(key, None);
+                } else {
+                    map.insert(key, Some(val.to_string()));
+                }
+            }
+        }
+    }
+
+    Ok(map)
 }
 
 impl ToString for SnapshotMetaFile {
