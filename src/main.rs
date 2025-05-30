@@ -70,8 +70,8 @@ fn snapshot_repo() -> Result<(), String> {
         ));
     }
 
-    let new_id = create_full_snapshot()?;
-    print!("Created snapshot with id: {}", new_id);
+    let new_snapshot = create_full_snapshot()?;
+    print!("Created snapshot with id: {}", new_snapshot.id);
 
     let mut head_file = read_head()?;
     let mut branch_file = read_branches()?;
@@ -80,10 +80,10 @@ fn snapshot_repo() -> Result<(), String> {
 
     match head_tar_path {
         None => {
-            head_file.curr_snapshot_id = Some(new_id.clone());
+            head_file.curr_snapshot_id = Some(new_snapshot.id.clone());
             branch_file
                 .branches
-                .insert(head_file.curr_branch.clone(), Some(new_id));
+                .insert(head_file.curr_branch.clone(), Some(new_snapshot.id));
         }
         Some(p) => {
             todo!();
@@ -135,7 +135,7 @@ fn is_jbackup_in_working_dir() -> io::Result<bool> {
 
 /// Creates a `tar` of the current working directly, excluding "./.jbackup".
 /// The `tar` is placed in the returned path.
-fn create_full_snapshot() -> Result<String, String> {
+fn create_full_snapshot() -> Result<SnapshotMetaFile, String> {
     let tmp_snapshot_path = create_tmp_snapshot()?;
     let md5 = calc_md5(&tmp_snapshot_path)?;
     let timestamp = match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
@@ -145,19 +145,18 @@ fn create_full_snapshot() -> Result<String, String> {
 
     let id = timestamp.to_string() + "-" + &md5;
 
-    commit_tmp_snapshot(
-        &tmp_snapshot_path,
-        SnapshotMetaFile {
-            id: String::clone(&id),
-            snapshot_type: SnapshotType::Full,
-            date: timestamp,
-            message: None,
-            children: Vec::new(),
-            parents: Vec::new(),
-        },
-    )?;
+    let snapshot_metadata = SnapshotMetaFile {
+        id: id,
+        snapshot_type: SnapshotType::Full,
+        date: timestamp,
+        message: None,
+        children: Vec::new(),
+        parents: Vec::new(),
+    };
 
-    Ok(id)
+    commit_tmp_snapshot(&tmp_snapshot_path, &snapshot_metadata)?;
+
+    Ok(snapshot_metadata)
 }
 
 /// Creates a `tar` of the current working directly, excluding "./.jbackup".
@@ -177,7 +176,7 @@ fn create_tmp_snapshot() -> Result<String, String> {
     Ok(output_path)
 }
 
-fn calc_md5(file_path: &String) -> Result<String, String> {
+fn calc_md5(file_path: &str) -> Result<String, String> {
     let output_result = process::Command::new("md5sum")
         .arg(file_path)
         .stdout(Stdio::piped())
@@ -202,7 +201,7 @@ fn calc_md5(file_path: &String) -> Result<String, String> {
     }
 }
 
-fn commit_tmp_snapshot(tmp_snapshot_path: &String, data: SnapshotMetaFile) -> Result<(), String> {
+fn commit_tmp_snapshot(tmp_snapshot_path: &str, data: &SnapshotMetaFile) -> Result<(), String> {
     ensure_snapshots_directory_exists()?;
 
     let snapshot_path = String::from("./.jbackup/snapshots/") + &data.id;
@@ -412,6 +411,6 @@ impl ToString for SnapshotType {
     }
 }
 
-fn escape_string_for_meta(s: &String) -> String {
+fn escape_string_for_meta(s: &str) -> String {
     s.replace('\\', "\\").replace('\n', "\\n")
 }
