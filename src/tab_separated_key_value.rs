@@ -3,7 +3,7 @@ use std::{
     fs,
 };
 
-use crate::util::simplify_result;
+use crate::io_util::simplify_result;
 
 pub struct Config {
     pub multivalue_keys: HashSet<String>,

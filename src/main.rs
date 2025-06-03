@@ -1,15 +1,15 @@
+mod io_util;
 mod tab_separated_key_value;
-mod util;
 
+use io_util::simplify_result;
 use std::{
     collections::{HashMap, HashSet},
     env, fs,
     io::{self, ErrorKind},
-    process::{self, ExitCode, Stdio},
+    process::{self, ExitCode},
     str::FromStr,
     time::SystemTime,
 };
-use util::simplify_result;
 
 const JBACKUP_PATH: &str = "./.jbackup";
 const SNAPSHOTS_PATH: &str = "./.jbackup/snapshots";
@@ -82,18 +82,13 @@ fn snapshot_repo() -> Result<(), String> {
     }
 
     let staged_snapshot = create_full_snapshot()?;
-    print!("Created snapshot with id: {}", &staged_snapshot.id);
+    println!("Created snapshot with id: {}", &staged_snapshot.id);
 
     let mut head_file = read_head()?;
     let mut branch_file = read_branches()?;
 
     match &head_file.curr_snapshot_id {
-        None => {
-            head_file.curr_snapshot_id = Some(staged_snapshot.id.clone());
-            branch_file
-                .branches
-                .insert(head_file.curr_branch.clone(), staged_snapshot.id.clone());
-        }
+        None => {}
         Some(curr_snapshot_id) => {
             let curr_snapshot_meta = SnapshotMetaFile::read(&curr_snapshot_id)?;
             if curr_snapshot_meta.full_type != SnapshotFullType::Tar {
@@ -105,12 +100,17 @@ fn snapshot_repo() -> Result<(), String> {
             }
 
             create_xdelta(CreateXDeltaArgs {
-                from_archive: &staged_snapshot.get_full_payload_filename()?,
+                from_archive: &(staged_snapshot.get_full_payload_filename()?),
                 to_archive: &curr_snapshot_meta.get_full_payload_filename()?,
                 output_archive: &(curr_snapshot_id.clone() + "-diff-" + &staged_snapshot.id),
             })?
         }
     }
+
+    head_file.curr_snapshot_id = Some(staged_snapshot.id.clone());
+    branch_file
+        .branches
+        .insert(head_file.curr_branch.clone(), staged_snapshot.id.clone());
 
     head_file.write()?;
     branch_file.write()?;
@@ -187,41 +187,27 @@ fn create_full_snapshot() -> Result<SnapshotMetaFile, String> {
 /// The `tar` is placed in the returned path.
 fn create_tmp_tar() -> Result<String, String> {
     let output_path = String::from(JBACKUP_PATH) + "/tmp_snapshot.tar";
-    let spawn_result = process::Command::new("tar")
-        .arg(String::from("--exclude=") + JBACKUP_PATH)
-        .arg("-cf")
-        .arg(&output_path)
-        .arg(".")
-        .spawn();
-
-    let mut proc = simplify_result(spawn_result)?;
-    simplify_result(proc.wait())?;
+    io_util::run_command_handle_failures(
+        process::Command::new("tar")
+            .arg(String::from("--exclude=") + JBACKUP_PATH)
+            .arg("-cf")
+            .arg(&output_path)
+            .arg("."),
+    )?;
 
     Ok(output_path)
 }
 
 fn calc_md5(file_path: &str) -> Result<String, String> {
-    let output_result = process::Command::new("md5sum")
-        .arg(file_path)
-        .stdout(Stdio::piped())
-        .output();
-    let output = simplify_result(output_result)?;
+    let output =
+        io_util::run_command_handle_failures(process::Command::new("md5sum").arg(&file_path))?;
 
-    if output.status.success() {
-        let output_str = simplify_result(String::from_utf8(output.stdout))?;
-        match output_str.find(' ') {
-            Some(index) => Ok(String::from(&output_str[..index])),
-            None => Err(String::from(
-                "md5sum did not output in the expected format.",
-            )),
-        }
-    } else {
-        let stdout_str = simplify_result(String::from_utf8(output.stdout))?;
-        let stderr_str = simplify_result(String::from_utf8(output.stderr))?;
-
-        eprintln!("Stdout from md5sum:\n{}", stdout_str);
-        eprintln!("Stderr from md5sum:\n{}", stderr_str);
-        Err(String::from("Failed to calculate md5 sum."))
+    let output_str = simplify_result(String::from_utf8(output.stdout))?;
+    match output_str.find(' ') {
+        Some(index) => Ok(String::from(&output_str[..index])),
+        None => Err(String::from(
+            "md5sum did not output in the expected format.",
+        )),
     }
 }
 
@@ -236,15 +222,18 @@ fn create_xdelta(args: CreateXDeltaArgs) -> Result<(), String> {
     let to_path = String::from(SNAPSHOTS_PATH) + "/" + args.to_archive;
     let output_path = String::from(SNAPSHOTS_PATH) + "/" + args.output_archive;
 
-    let spawn_result = process::Command::new("xdelta")
-        .arg("delta")
-        .arg(from_path)
-        .arg(to_path)
-        .arg(output_path)
-        .spawn();
+    // todo: maybe xdelta3 has a better api?
+    let result = io_util::run_command_handle_failures(
+        process::Command::new("xdelta")
+            .arg("delta")
+            .arg(&from_path)
+            .arg(&to_path)
+            .arg(&output_path),
+    );
 
-    let mut proc = simplify_result(spawn_result)?;
-    simplify_result(proc.wait())?;
+    if result.is_err() {
+        eprintln!("Warn: xdelta exited badly");
+    }
 
     Ok(())
 }
