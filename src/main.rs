@@ -81,16 +81,20 @@ fn snapshot_repo() -> Result<(), String> {
         ));
     }
 
-    let staged_snapshot = create_full_snapshot()?;
+    let mut files_to_delete = FilesToDelete::new();
+
+    let mut staged_snapshot = create_full_snapshot()?;
     println!("Created snapshot with id: {}", &staged_snapshot.id);
 
     let mut head_file = read_head()?;
     let mut branch_file = read_branches()?;
 
     match &head_file.curr_snapshot_id {
-        None => {}
+        None => {
+            staged_snapshot.write()?;
+        }
         Some(curr_snapshot_id) => {
-            let curr_snapshot_meta = SnapshotMetaFile::read(&curr_snapshot_id)?;
+            let mut curr_snapshot_meta = SnapshotMetaFile::read(&curr_snapshot_id)?;
             if curr_snapshot_meta.full_type != SnapshotFullType::Tar {
                 todo!("Not implemented: Current snapshot is not a tar snapshot type");
             }
@@ -99,11 +103,33 @@ fn snapshot_repo() -> Result<(), String> {
                 todo!("Not implemented: Staged snapshot is not a tar snapshot type");
             }
 
+            // add parent-child relations for staged snapshot
+            curr_snapshot_meta.children.push(staged_snapshot.id.clone());
+            staged_snapshot.parents.push(curr_snapshot_id.clone());
+
+            // create diff
+            let curr_snapshot_payload_full_name = curr_snapshot_meta.get_full_payload_filename()?;
+
             create_xdelta(CreateXDeltaArgs {
                 from_archive: &(staged_snapshot.get_full_payload_filename()?),
-                to_archive: &curr_snapshot_meta.get_full_payload_filename()?,
+                to_archive: &curr_snapshot_payload_full_name,
                 output_archive: &(curr_snapshot_id.clone() + "-diff-" + &staged_snapshot.id),
-            })?
+            })?;
+
+            curr_snapshot_meta
+                .diff_children
+                .push(staged_snapshot.id.clone());
+            staged_snapshot.diff_parents.push(curr_snapshot_id.clone());
+
+            // mark snapshot as having no full payload, but we will only delete the file
+            // after all snapshot metadata have been written
+            curr_snapshot_meta.full_type = SnapshotFullType::None;
+            files_to_delete
+                .snapshots_files
+                .push(curr_snapshot_payload_full_name);
+
+            staged_snapshot.write()?;
+            curr_snapshot_meta.write()?;
         }
     }
 
@@ -115,7 +141,39 @@ fn snapshot_repo() -> Result<(), String> {
     head_file.write()?;
     branch_file.write()?;
 
+    files_to_delete.delete_files();
+
     Ok(())
+}
+
+struct FilesToDelete {
+    snapshots_files: Vec<String>,
+}
+
+impl FilesToDelete {
+    fn new() -> FilesToDelete {
+        FilesToDelete {
+            snapshots_files: Vec::new(),
+        }
+    }
+
+    /// Wrapper of _delete_files that prints a warning when
+    /// the child function fails.
+    fn delete_files(&self) {
+        match self._delete_files() {
+            Ok(_) => {}
+            Err(err) => eprintln!("Warn: Error when cleaning files up: {}", err),
+        }
+    }
+
+    fn _delete_files(&self) -> Result<(), String> {
+        for filepath in &self.snapshots_files {
+            simplify_result(fs::remove_file(
+                String::from(SNAPSHOTS_PATH) + "/" + &filepath,
+            ))?;
+        }
+        Ok(())
+    }
 }
 
 fn is_jbackup_in_working_dir() -> io::Result<bool> {
@@ -241,13 +299,11 @@ fn create_xdelta(args: CreateXDeltaArgs) -> Result<(), String> {
 fn commit_tmp_snapshot(tmp_snapshot_path: &str, data: &SnapshotMetaFile) -> Result<(), String> {
     ensure_snapshots_directory_exists()?;
 
-    let snapshot_path = String::from(SNAPSHOTS_PATH) + "/" + &data.id;
-
     simplify_result(fs::rename(
         tmp_snapshot_path,
         String::from(SNAPSHOTS_PATH) + "/" + &data.get_full_payload_filename()?,
     ))?;
-    simplify_result(fs::write(snapshot_path + ".meta", data.serialize()?))?;
+
     Ok(())
 }
 
@@ -398,15 +454,27 @@ impl SnapshotMetaFile {
         keys
     }
 
+    fn write(&self) -> Result<(), String> {
+        simplify_result(fs::write(
+            String::from(SNAPSHOTS_PATH) + "/" + &self.id + ".meta",
+            self.serialize()?,
+        ))
+    }
+
     fn serialize(&self) -> Result<String, String> {
         tab_separated_key_value::Contents {
             single_value: {
                 let mut m = HashMap::new();
                 m.insert(String::from("date"), self.date.to_string());
+
                 self.message
                     .clone()
                     .map(|s| m.insert(String::from("message"), s));
-                m.insert(String::from("full"), self.full_type.to_string());
+
+                if self.full_type != SnapshotFullType::None {
+                    m.insert(String::from("full"), self.full_type.to_string());
+                }
+
                 m
             },
             multi_value: {
