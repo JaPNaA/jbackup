@@ -135,22 +135,22 @@ main    1748490695-d96dbc36c710a6163736f9903b9e5137
 $ cat .jbackup/head  # the current "checked out" snapshot ID
 1748490695-d96dbc36c710a6163736f9903b9e5137
 $ ls .jbackup/snapshots  # list of all snapshots
-1748490695-d96dbc36c710a6163736f9903b9e5137-full
+1748490695-d96dbc36c710a6163736f9903b9e5137-full.tar
 1748490695-d96dbc36c710a6163736f9903b9e5137.meta
 $ cat .jbackup/snapshots/1748490695-d96dbc36c710a6163736f9903b9e5137.meta
 date    1748490695
-full    true
+full    tar
 message My message goes here...\nNew lines are escaped. Backslashes are escaped (\\)
 ```
 
 - In the `{snapshotId}.meta` file, we have a file with a key-value pair separated by the first tab on the line
-- the 'full' key specifies that the full contents of the snapshot are stored in file `{snapshotId}-full`
+- the 'full' key specifies a _type_ (ex. tar, tar.gz) that the full contents of the snapshot are stored in, located at `{snapshotId}-full.{type}`
 - the 'child' key specifies later snapshots derived from this
 - the 'parent' key specifies previous snapshots this snapshot was derived from
 - additional 'd' (diff) keys
   - required to store the relationship of diffs (the above keys represent logical / chronological order)
   - idea: the parent/child relationship is only modified explicity by the user using snapshot/branches. The dparent/dchild relationships are modified automatically based on performance/storage optimizations
-  - the 'dchild' key specifies the snapshot (_dchild_) such that the snapshot (_snapshotId_) can be recovered by applying the delta file `{snapshotId}-diff-{dchild}` to _dchild_ will recover _snapshotId_
+  - the 'dchild' key specifies the snapshot (_dchild_) such that the snapshot (_snapshotId_) can be recovered by applying the delta file `{snapshotId}-diff-{dchild}` to _dchild_
   - the 'dparent' key is the inverse of 'dchild'. That is: specifies the snapshot (_dparent_) such that the snapshot (_snapshotId_) can be used to recover _dparent_ by applying the delta file `{dparent}-diff-{snapshotId}` to _dparent_
 
 

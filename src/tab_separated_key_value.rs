@@ -6,7 +6,7 @@ use std::{
 use crate::util::simplify_result;
 
 pub struct Config {
-    multivalue_keys: HashSet<String>,
+    pub multivalue_keys: HashSet<String>,
 }
 
 #[derive(PartialEq, Debug)]
