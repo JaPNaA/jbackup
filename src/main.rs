@@ -81,10 +81,20 @@ fn snapshot_repo() -> Result<(), String> {
         ));
     }
 
+    ensure_snapshots_directory_exists()?;
+
     let mut files_to_delete = FilesToDelete::new();
 
     let mut staged_snapshot = create_full_snapshot()?;
-    println!("Created snapshot with id: {}", &staged_snapshot.id);
+
+    if simplify_result(fs::exists(SnapshotMetaFile::get_meta_file_path(
+        &staged_snapshot.id,
+    )))? {
+        return Err(format!(
+            "A snapshot with the same id ({}) already exists.",
+            &staged_snapshot.id
+        ));
+    }
 
     let mut head_file = read_head()?;
     let mut branch_file = read_branches()?;
@@ -132,6 +142,8 @@ fn snapshot_repo() -> Result<(), String> {
             curr_snapshot_meta.write()?;
         }
     }
+
+    println!("Created snapshot with id: {}", &staged_snapshot.id);
 
     head_file.curr_snapshot_id = Some(staged_snapshot.id.clone());
     branch_file
@@ -297,14 +309,19 @@ fn create_xdelta(args: CreateXDeltaArgs) -> Result<(), String> {
 }
 
 fn commit_tmp_snapshot(tmp_snapshot_path: &str, data: &SnapshotMetaFile) -> Result<(), String> {
-    ensure_snapshots_directory_exists()?;
+    let snapshot_payload_path =
+        String::from(SNAPSHOTS_PATH) + "/" + &data.get_full_payload_filename()?;
 
-    simplify_result(fs::rename(
-        tmp_snapshot_path,
-        String::from(SNAPSHOTS_PATH) + "/" + &data.get_full_payload_filename()?,
-    ))?;
-
-    Ok(())
+    let file_exists = simplify_result(fs::exists(&snapshot_payload_path))?;
+    if file_exists {
+        Err(format!(
+            "Tried to commit snapshot to '{}', but the file already exists",
+            &snapshot_payload_path
+        ))
+    } else {
+        simplify_result(fs::rename(tmp_snapshot_path, snapshot_payload_path))?;
+        Ok(())
+    }
 }
 
 /// Checks if "./.jbackup/snapshots" exists, otherwise, creates the directory
@@ -412,7 +429,7 @@ impl SnapshotMetaFile {
         let result = tab_separated_key_value::Config {
             multivalue_keys: SnapshotMetaFile::get_multivalue_keys(),
         }
-        .read_file(&(String::from(SNAPSHOTS_PATH) + "/" + &snapshot_id + ".meta"))?;
+        .read_file(&(SnapshotMetaFile::get_meta_file_path(&snapshot_id)))?;
 
         let snapshot_date = match result.single_value.get("date") {
             Some(s) => simplify_result(u64::from_str_radix(s, 10))?,
@@ -456,9 +473,13 @@ impl SnapshotMetaFile {
 
     fn write(&self) -> Result<(), String> {
         simplify_result(fs::write(
-            String::from(SNAPSHOTS_PATH) + "/" + &self.id + ".meta",
+            SnapshotMetaFile::get_meta_file_path(&self.id),
             self.serialize()?,
         ))
+    }
+
+    fn get_meta_file_path(id: &str) -> String {
+        String::from(SNAPSHOTS_PATH) + "/" + id + ".meta"
     }
 
     fn serialize(&self) -> Result<String, String> {
