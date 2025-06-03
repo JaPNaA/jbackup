@@ -167,16 +167,16 @@ $ cat .jbackup/head  # the head changed
 $ ls .jbackup/snapshots  # a new snapshot was added
 1748490695-d96dbc36c710a6163736f9903b9e5137-diff-1748491449-fecdcb27c5bf6e100e42c637feb40394
 1748490695-d96dbc36c710a6163736f9903b9e5137.meta
-1748491449-fecdcb27c5bf6e100e42c637feb40394
+1748491449-fecdcb27c5bf6e100e42c637feb40394-full.tar
 1748491449-fecdcb27c5bf6e100e42c637feb40394.meta
 $ cat .jbackup/snapshots/1748490695-d96dbc36c710a6163736f9903b9e5137.meta  # the previous snapshot metadata was updated
+date    1748490695
 child   1748491449-fecdcb27c5bf6e100e42c637feb40394
 dchild  1748491449-fecdcb27c5bf6e100e42c637feb40394
-date    1748490695
 message My message goes here...\nNew lines are escaped. Backslashes are escaped (\\)
 $ cat .jbackup/snapshots/1748491449-fecdcb27c5bf6e100e42c637feb40394.meta  # the next snapshot is full
 date    1748490695
+full    tar
 parent  1748490695-d96dbc36c710a6163736f9903b9e5137
 dparent 1748490695-d96dbc36c710a6163736f9903b9e5137
-full    true
 ```
