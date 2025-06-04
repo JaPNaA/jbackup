@@ -1,11 +1,7 @@
-use std::{
-    fs,
-    process,
-    time::SystemTime,
-};
+use std::{collections::VecDeque, fs, process, time::SystemTime};
 
 use crate::{
-    JBACKUP_PATH, SNAPSHOTS_PATH, file_structure,
+    JBACKUP_PATH, SNAPSHOTS_PATH, arguments, file_structure,
     io_util::{self, simplify_result},
 };
 
@@ -13,7 +9,13 @@ use crate::{
 ///
 /// A user should be able to restore the working directory to when they made
 /// a snapshot.
-pub fn main() -> Result<(), String> {
+///
+/// Will read the arguments to find an optional message for the snapshot.
+///
+pub fn main(mut args: VecDeque<String>) -> Result<(), String> {
+    let mut parsed_args = arguments::Parser::new().option("-m").parse(args.drain(..));
+    let mut snapshot_message_arg = parsed_args.options.remove("-m");
+
     file_structure::ensure_jbackup_snapshots_dir_exists()?;
 
     let mut files_to_delete = FilesToDelete::new();
@@ -28,6 +30,8 @@ pub fn main() -> Result<(), String> {
             &staged_snapshot.id
         ));
     }
+
+    staged_snapshot.message = snapshot_message_arg.take();
 
     let mut head_file = file_structure::HeadFile::read()?;
     let mut branch_file = file_structure::BranchesFile::read()?;
