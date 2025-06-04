@@ -214,13 +214,45 @@ impl FromStr for SnapshotFullType {
     }
 }
 
+/// Retrieves all snapshot metadata files in the current repository.
+/// This function parses all files and returns the files in arbitrary order.
+pub fn get_all_snapshot_meta_files() -> Result<Vec<SnapshotMetaFile>, String> {
+    ensure_jbackup_snapshots_dir_exists()?;
+
+    let mut snapshot_ids = Vec::new();
+
+    let dir = simplify_result(fs::read_dir(SNAPSHOTS_PATH))?;
+
+    for item in dir {
+        match item {
+            Err(_) => {}
+            Ok(entry) => match entry.file_name().into_string() {
+                Err(_) => {}
+                Ok(file_name) => match file_name.strip_suffix(".meta") {
+                    None => {}
+                    Some(x) => snapshot_ids.push(String::from(x)),
+                },
+            },
+        }
+    }
+
+    let mut snapshots = Vec::new();
+
+    for item in snapshot_ids {
+        let meta = SnapshotMetaFile::read(&item)?;
+        snapshots.push(meta);
+    }
+
+    Ok(snapshots)
+}
+
 /// Checks if .jbackup is in the current directory, then checks
 /// if the snapshot directory exists.
-/// 
+///
 /// If .jbackup is not in the current directory, an error is returned.
 ///
 /// If snapshot directory is created if it doesn't exist.
-/// 
+///
 /// Otherwise, the function returns Ok
 pub fn ensure_jbackup_snapshots_dir_exists() -> Result<(), String> {
     if !simplify_result(is_jbackup_in_working_dir())? {
