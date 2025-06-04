@@ -1,6 +1,5 @@
 use std::{
     fs,
-    io::{self, ErrorKind},
     process,
     time::SystemTime,
 };
@@ -15,13 +14,7 @@ use crate::{
 /// A user should be able to restore the working directory to when they made
 /// a snapshot.
 pub fn main() -> Result<(), String> {
-    if !simplify_result(is_jbackup_in_working_dir())? {
-        return Err(String::from(
-            "Error: jbackup not found in current working directory. (To make a new backup for this directory, do 'jbackup init')",
-        ));
-    }
-
-    ensure_snapshots_directory_exists()?;
+    file_structure::ensure_jbackup_snapshots_dir_exists()?;
 
     let mut files_to_delete = FilesToDelete::new();
 
@@ -134,7 +127,7 @@ fn create_full_snapshot() -> Result<file_structure::SnapshotMetaFile, String> {
     let tmp_tar_path = create_tmp_tar()?;
     let md5 = calc_md5(&tmp_tar_path)?;
     let timestamp = match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
-        Ok(n) => n.as_secs(),
+        Ok(n) => n.as_secs().try_into().unwrap(),
         Err(_) => 0,
     };
 
@@ -227,56 +220,5 @@ fn commit_tmp_snapshot(
     } else {
         simplify_result(fs::rename(tmp_snapshot_path, snapshot_payload_path))?;
         Ok(())
-    }
-}
-
-fn is_jbackup_in_working_dir() -> io::Result<bool> {
-    match fs::read_dir(JBACKUP_PATH) {
-        Err(err) => match err.kind() {
-            ErrorKind::NotFound => Ok(false),
-            ErrorKind::NotADirectory => Ok(false),
-            _ => Err(err),
-        },
-        Ok(result) => {
-            let mut found_branches = false;
-            let mut found_head = false;
-
-            for item in result {
-                match item.ok() {
-                    None => {}
-                    Some(entry) => match entry.file_name().into_string() {
-                        Ok(s) => match s.as_str() {
-                            "branches" => found_branches = true,
-                            "head" => found_head = true,
-                            _ => {}
-                        },
-                        Err(_) => {}
-                    },
-                }
-            }
-
-            if found_branches && found_head {
-                Ok(true)
-            } else {
-                println!(
-                    "Warning: found .jbackup directory, but some files were missing. The directory may be corrupted. Consider removing '.jbackup' (this will discard your backups!)"
-                );
-                Ok(false)
-            }
-        }
-    }
-}
-
-/// Checks if "./.jbackup/snapshots" exists, otherwise, creates the directory
-fn ensure_snapshots_directory_exists() -> Result<(), String> {
-    match fs::read_dir(SNAPSHOTS_PATH) {
-        Err(err) => match err.kind() {
-            ErrorKind::NotFound => simplify_result(fs::create_dir(SNAPSHOTS_PATH)),
-            ErrorKind::NotADirectory => {
-                Err(format!("Expected {} to be a directory", SNAPSHOTS_PATH))
-            }
-            _ => simplify_result(Err(err)),
-        },
-        Ok(_) => Ok(()),
     }
 }

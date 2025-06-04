@@ -34,10 +34,14 @@ fn main() -> ExitCode {
             Err(error) => Err(format!("Failed to snapshot repository: {error}")),
             Ok(_) => Ok(()),
         },
+        "log" => match subcommand::log::main() {
+            Err(error) => Err(format!("Failed to get logs: {error}")),
+            Ok(_) => Ok(())
+        }
         "help" => {
             println!("{}", HELP_TEXT);
             Ok(())
-        }
+        },
         // todo: remove this command
         // this command allows restoring of a snapshot.
         // data will be stored in the "./.jbackup/_debug" directory.

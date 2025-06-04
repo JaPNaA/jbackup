@@ -3,4 +3,5 @@
 
 pub mod __debug_restore;
 pub mod init;
+pub mod log;
 pub mod snapshot;

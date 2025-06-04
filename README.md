@@ -21,7 +21,7 @@ $ jbackup init
 
 The `init` subcommand creates a `.jbackup` directory (similar to the `.git` directory.) The `.jbackup` directory will contain all history information about it's parent directory.
 
-### Commits
+### Snapshots
 
 We can store 'snapshots' of the parent directory using the `snapshot` command.
 
@@ -37,11 +37,33 @@ Following `snapshot`s will:
 3. The patch will be stored in `.jbackup`
 4. The previous tarball is deleted, and replaced with the current tarball
 
-You may optionally supply a commit message. For example:
+You may optionally supply a snapshot message. For example:
 
 ```
-$ jbackup commit -m "Created an iron farm at spawn in Minecraft"
+$ jbackup snapshot -m "Created an iron farm at spawn in Minecraft"
 ```
+
+### Log
+
+We can view all snapshots by using the `log` command.
+
+```
+$ jbackup log
+```
+
+*All* snapshots will be listed in chronological order.
+
+If there are multiple branches, the snapshots not part of the current branch will be shown with brackets around them.
+
+### Restore
+
+You can restore a snapshot given the snapshot's ID by using the `restore` command.
+
+```
+$ jbackup restore 1749058471-eb03dacbfbc30c61600ca60859fb33f7
+```
+
+The working directory will be overwritten with the contents of the snapshot.
 
 ### Branches (not implemented)
 

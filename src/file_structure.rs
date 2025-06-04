@@ -1,11 +1,13 @@
 use std::{
     collections::{HashMap, HashSet},
     fs,
+    io::{self, ErrorKind},
     str::FromStr,
 };
 
 use crate::{
-    BRANCHES_PATH, HEAD_PATH, SNAPSHOTS_PATH, io_util::simplify_result, tab_separated_key_value,
+    BRANCHES_PATH, HEAD_PATH, JBACKUP_PATH, SNAPSHOTS_PATH, io_util::simplify_result,
+    tab_separated_key_value,
 };
 
 pub struct BranchesFile {
@@ -71,7 +73,7 @@ impl HeadFile {
 
 pub struct SnapshotMetaFile {
     pub id: String,
-    pub date: u64,
+    pub date: i64,
     pub message: Option<String>,
     /// if set, the full contents of the snapshot are stored in
     /// `{snapshotId}-full`
@@ -96,7 +98,7 @@ impl SnapshotMetaFile {
         .read_file(&(SnapshotMetaFile::get_meta_file_path(&snapshot_id)))?;
 
         let snapshot_date = match result.single_value.get("date") {
-            Some(s) => simplify_result(u64::from_str_radix(s, 10))?,
+            Some(s) => simplify_result(i64::from_str_radix(s, 10))?,
             None => {
                 return Err(format!(
                     "Missing key 'date' in metadata of snapshot {}",
@@ -209,5 +211,76 @@ impl FromStr for SnapshotFullType {
             "tar.gz" => Ok(SnapshotFullType::TarGz),
             _ => Err(String::from("Unrecognized snapshot full type")),
         }
+    }
+}
+
+/// Checks if .jbackup is in the current directory, then checks
+/// if the snapshot directory exists.
+/// 
+/// If .jbackup is not in the current directory, an error is returned.
+///
+/// If snapshot directory is created if it doesn't exist.
+/// 
+/// Otherwise, the function returns Ok
+pub fn ensure_jbackup_snapshots_dir_exists() -> Result<(), String> {
+    if !simplify_result(is_jbackup_in_working_dir())? {
+        return Err(String::from(
+            "Error: jbackup not found in current working directory. (To make a new backup for this directory, do 'jbackup init')",
+        ));
+    }
+
+    ensure_snapshots_directory_exists()?;
+
+    Ok(())
+}
+
+fn is_jbackup_in_working_dir() -> io::Result<bool> {
+    match fs::read_dir(JBACKUP_PATH) {
+        Err(err) => match err.kind() {
+            ErrorKind::NotFound => Ok(false),
+            ErrorKind::NotADirectory => Ok(false),
+            _ => Err(err),
+        },
+        Ok(result) => {
+            let mut found_branches = false;
+            let mut found_head = false;
+
+            for item in result {
+                match item.ok() {
+                    None => {}
+                    Some(entry) => match entry.file_name().into_string() {
+                        Ok(s) => match s.as_str() {
+                            "branches" => found_branches = true,
+                            "head" => found_head = true,
+                            _ => {}
+                        },
+                        Err(_) => {}
+                    },
+                }
+            }
+
+            if found_branches && found_head {
+                Ok(true)
+            } else {
+                println!(
+                    "Warning: found .jbackup directory, but some files were missing. The directory may be corrupted. Consider removing '.jbackup' (this will discard your backups!)"
+                );
+                Ok(false)
+            }
+        }
+    }
+}
+
+/// Checks if "./.jbackup/snapshots" exists, otherwise, creates the directory
+fn ensure_snapshots_directory_exists() -> Result<(), String> {
+    match fs::read_dir(SNAPSHOTS_PATH) {
+        Err(err) => match err.kind() {
+            ErrorKind::NotFound => simplify_result(fs::create_dir(SNAPSHOTS_PATH)),
+            ErrorKind::NotADirectory => {
+                Err(format!("Expected {} to be a directory", SNAPSHOTS_PATH))
+            }
+            _ => simplify_result(Err(err)),
+        },
+        Ok(_) => Ok(()),
     }
 }
