@@ -10,6 +10,10 @@ use crate::{
     io_util::{self, simplify_result},
 };
 
+/// Creates a snapshot of the current working directory (excluding .jbackup).
+///
+/// A user should be able to restore the working directory to when they made
+/// a snapshot.
 pub fn main() -> Result<(), String> {
     if !simplify_result(is_jbackup_in_working_dir())? {
         return Err(String::from(
