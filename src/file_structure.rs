@@ -146,6 +146,10 @@ impl SnapshotMetaFile {
         }
     }
 
+    pub fn get_diff_path_from_child_snapshot(&self, snapshot_id: &str) -> String {
+        self.id.clone() + "-diff-" + &snapshot_id
+    }
+
     fn get_multivalue_keys() -> HashSet<String> {
         let mut keys = HashSet::new();
         keys.insert(String::from("child"));

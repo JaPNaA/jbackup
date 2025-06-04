@@ -80,7 +80,7 @@ fn run_with_arguments(args_iter: Args) -> Result<(), String> {
         // todo: remove this command
         // this command allows restoring of a snapshot.
         // data will be stored in the "./.jbackup/_debug" directory.
-        "__debug_restore" => match subcommand::__debug_restore::main() {
+        "__debug_restore" => match subcommand::__debug_restore::main(args.normal) {
             Err(err) => Err(format!("Failed to restore: {err}")),
             Ok(_) => Ok(()),
         },

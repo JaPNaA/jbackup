@@ -60,7 +60,7 @@ pub fn main(mut args: VecDeque<String>) -> Result<(), String> {
             create_xdelta(CreateXDeltaArgs {
                 from_archive: &(staged_snapshot.get_full_payload_filename()?),
                 to_archive: &curr_snapshot_payload_full_name,
-                output_archive: &(curr_snapshot_id.clone() + "-diff-" + &staged_snapshot.id),
+                output_archive: &curr_snapshot_meta.get_diff_path_from_child_snapshot(&staged_snapshot.id),
             })?;
 
             curr_snapshot_meta
