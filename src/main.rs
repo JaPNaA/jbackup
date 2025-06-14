@@ -3,6 +3,7 @@ mod file_structure;
 mod io_util;
 mod subcommand;
 mod tab_separated_key_value;
+mod transformer;
 
 use std::{
     env::{self, Args},
@@ -77,13 +78,19 @@ fn run_with_arguments(args_iter: Args) -> Result<(), String> {
             Err(error) => Err(format!("Failed to get logs: {error}")),
             Ok(_) => Ok(()),
         },
-        // todo: remove this command
+        // todo: remove __debug commands
+
         // this command allows restoring of a snapshot.
         // data will be stored in the "./.jbackup/_debug" directory.
         "__debug_restore" => match subcommand::__debug_restore::main(args.normal) {
             Err(err) => Err(format!("Failed to restore: {err}")),
             Ok(_) => Ok(()),
         },
+        "__debug_filter" => match transformer::minecraft_mca::__debug_transform(args.normal) {
+            Err(err) => Err(format!("Failed to filter: {err}")),
+            Ok(_) => Ok(()),
+        },
+
         _ => Err(format!("Error: unknown command '{}'", command)),
     }
 }
