@@ -4,7 +4,7 @@ use std::{
     io::{Read, Write},
 };
 
-use flate2::read::ZlibDecoder;
+use flate2::{read::ZlibDecoder, write::ZlibEncoder};
 
 use crate::io_util::simplify_result;
 
@@ -65,7 +65,8 @@ pub fn __debug_transform(mut args: VecDeque<String>) -> Result<(), String> {
     ))?;
 
     let region = RegionFileFormatReader::new(contents);
-    simplify_result(std::io::stdout().write_all(&transform_region_file_to_uncompressed(&region)?))?;
+    // simplify_result(std::io::stdout().write_all(&transform_region_file_to_uncompressed(&region)?))?;
+    simplify_result(std::io::stdout().write_all(&transform_region_file_to_compressed(&region)?))?;
     // println!("{}", nbt::to_human_readable(&mut data.iter()));
     // }
 
@@ -80,7 +81,27 @@ fn transform_region_file_to_uncompressed(
     for i in 0..CHUNKS_IN_REGION {
         let desc = reader.get_chunk_i(i);
         if desc.is_exists() {
-            writer.add_chunk(i, desc.timestamp, reader.read_chunk_uncompressed(&desc)?);
+            writer.add_chunk(i, desc.timestamp, 3, reader.read_chunk_uncompressed(&desc)?);
+        }
+    }
+
+    writer.serialize()
+}
+
+fn transform_region_file_to_compressed(reader: &RegionFileFormatReader) -> Result<Vec<u8>, String> {
+    let mut writer = RegionFileFormatWriter::new();
+
+    for i in 0..CHUNKS_IN_REGION {
+        let desc = reader.get_chunk_i(i);
+
+        let payload = reader.read_chunk_uncompressed(&desc)?;
+        let mut encoder = ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+        simplify_result(encoder.write_all(&payload))?;
+        let compressed_payload = simplify_result(encoder.finish())?;
+
+        if desc.is_exists() {
+            // compression scheme 2 = zlib
+            writer.add_chunk(i, desc.timestamp, 2, compressed_payload);
         }
     }
 
@@ -262,7 +283,13 @@ impl RegionFileFormatWriter {
     /// in left-to-right, then up-down order (English reading direction).
     ///
     /// This limitation is required to help reduce diffs between worlds.
-    fn add_chunk(&mut self, chunk_i: usize, timestamp: u32, payload: Vec<u8>) {
+    fn add_chunk(
+        &mut self,
+        chunk_i: usize,
+        timestamp: u32,
+        compression_scheme: u8,
+        payload: Vec<u8>,
+    ) {
         // let chunk_i = (local_chunk_y as usize) * REGION_WIDTH_CHUNK + (local_chunk_x as usize);
         if chunk_i < self.next_chunk_i_must_be_ge {
             panic!(
@@ -285,8 +312,8 @@ impl RegionFileFormatWriter {
         let new_payload_len = self.payload.len() + sector_count * SECTOR_SIZE;
 
         self.payload
-            .extend_from_slice(&(payload.len() + 1).to_be_bytes());
-        self.payload.push(3); // uncompressed
+            .extend_from_slice(&((payload.len() + 1) as i32).to_be_bytes());
+        self.payload.push(compression_scheme);
         self.payload.extend(payload);
 
         for _ in 0..(new_payload_len - self.payload.len()) {
