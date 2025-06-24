@@ -226,3 +226,71 @@ fn commit_tmp_snapshot(
         Ok(())
     }
 }
+
+pub fn walk_file_tree(
+    dir_path: OsString,
+    file_handler: &mut impl FnMut(OsString),
+) -> Result<(), String> {
+    _walk_file_tree(dir_path, 0, file_handler)
+}
+
+fn _walk_file_tree(
+    dir_path: OsString,
+    depth: usize,
+    file_handler: &mut impl FnMut(OsString),
+) -> Result<(), String> {
+    let files = simplify_result(fs::read_dir(&dir_path))?;
+    let mut sorted_files = Vec::new();
+    let mut sorted_directories = Vec::new();
+
+    for file in files {
+        match file {
+            Err(err) => {
+                eprint!(
+                    "Warning: failed to read file in '{}' due to: {}",
+                    dir_path.to_str().unwrap_or("<invalid string>"),
+                    err
+                );
+            }
+            Ok(file) => match file.file_type() {
+                Err(err) => {
+                    eprint!(
+                        "Warning: failed to get file type for file '{}/{}' due to: {}",
+                        dir_path.to_str().unwrap_or("<invalid string>"),
+                        file.file_name().to_str().unwrap_or("<invalid string>"),
+                        err
+                    )
+                }
+                Ok(file_type) => {
+                    if file_type.is_file() {
+                        sorted_files.push(file.file_name())
+                    } else if file_type.is_dir() {
+                        if depth != 0 || file.file_name() != ".jbackup" {
+                            sorted_directories.push(file.file_name())
+                        }
+                    }
+                }
+            },
+        }
+    }
+
+    sorted_files.sort();
+
+    for file in sorted_files {
+        let mut path = dir_path.clone();
+        path.push("/");
+        path.push(file);
+        file_handler(path);
+    }
+
+    sorted_directories.sort();
+
+    for file in sorted_directories {
+        let mut path = dir_path.clone();
+        path.push("/");
+        path.push(file);
+        _walk_file_tree(path, depth + 1, file_handler)?;
+    }
+
+    Ok(())
+}
