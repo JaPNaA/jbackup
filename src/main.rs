@@ -14,6 +14,7 @@ pub const JBACKUP_PATH: &str = "./.jbackup";
 pub const SNAPSHOTS_PATH: &str = "./.jbackup/snapshots";
 pub const BRANCHES_PATH: &str = "./.jbackup/branches";
 pub const HEAD_PATH: &str = "./.jbackup/head";
+pub const CONFIG_PATH: &str = "./.jbackup/config";
 
 const HELP_TEXT: &str = "
 Subcommands
@@ -66,7 +67,7 @@ fn run_with_arguments(args_iter: Args) -> Result<(), String> {
             println!("{}", HELP_TEXT);
             Ok(())
         }
-        "init" => match subcommand::init::main() {
+        "init" => match subcommand::init::main(args.normal) {
             Err(error) => Err(format!("Failed to initalize repository: {error}")),
             Ok(_) => Ok(()),
         },

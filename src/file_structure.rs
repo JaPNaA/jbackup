@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    BRANCHES_PATH, HEAD_PATH, JBACKUP_PATH, SNAPSHOTS_PATH, io_util::simplify_result,
+    BRANCHES_PATH, CONFIG_PATH, HEAD_PATH, JBACKUP_PATH, SNAPSHOTS_PATH, io_util::simplify_result,
     tab_separated_key_value,
 };
 
@@ -250,6 +250,35 @@ pub fn get_all_snapshot_meta_files() -> Result<Vec<SnapshotMetaFile>, String> {
     Ok(snapshots)
 }
 
+pub struct ConfigFile {
+    pub transformers: Vec<String>,
+}
+
+impl ConfigFile {
+    pub fn read() -> Result<ConfigFile, String> {
+        let contents =
+            tab_separated_key_value::Config::single_value_only().read_file(CONFIG_PATH)?;
+        Ok(ConfigFile {
+            transformers: match contents.multi_value.get("transformer") {
+                Some(x) => x.clone(),
+                None => Vec::new(),
+            },
+        })
+    }
+
+    pub fn write(self) -> Result<(), String> {
+        tab_separated_key_value::Contents {
+            multi_value: {
+                let mut m = HashMap::new();
+                m.insert(String::from("transformer"), self.transformers);
+                m
+            },
+            single_value: HashMap::new(),
+        }
+        .write_file(CONFIG_PATH)
+    }
+}
+
 /// Checks if .jbackup is in the current directory, then checks
 /// if the snapshot directory exists.
 ///
@@ -261,7 +290,7 @@ pub fn get_all_snapshot_meta_files() -> Result<Vec<SnapshotMetaFile>, String> {
 pub fn ensure_jbackup_snapshots_dir_exists() -> Result<(), String> {
     if !simplify_result(is_jbackup_in_working_dir())? {
         return Err(String::from(
-            "Error: jbackup not found in current working directory. (To make a new backup for this directory, do 'jbackup init')",
+            "Error: a valid jbackup was not found in current working directory. (To make a new backup for this directory, do 'jbackup init')",
         ));
     }
 
@@ -280,6 +309,7 @@ fn is_jbackup_in_working_dir() -> io::Result<bool> {
         Ok(result) => {
             let mut found_branches = false;
             let mut found_head = false;
+            let mut found_config = false;
 
             for item in result {
                 match item.ok() {
@@ -288,6 +318,7 @@ fn is_jbackup_in_working_dir() -> io::Result<bool> {
                         Ok(s) => match s.as_str() {
                             "branches" => found_branches = true,
                             "head" => found_head = true,
+                            "config" => found_config = true,
                             _ => {}
                         },
                         Err(_) => {}
@@ -295,7 +326,7 @@ fn is_jbackup_in_working_dir() -> io::Result<bool> {
                 }
             }
 
-            if found_branches && found_head {
+            if found_branches && found_head && found_config {
                 Ok(true)
             } else {
                 println!(

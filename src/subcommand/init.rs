@@ -1,12 +1,31 @@
-use std::{collections::HashMap, fs};
+use std::{
+    collections::{HashMap, VecDeque},
+    fs,
+};
 
-use crate::{JBACKUP_PATH, file_structure, io_util::simplify_result};
+use crate::{
+    JBACKUP_PATH, arguments, file_structure, io_util::simplify_result, transformer::get_transformer,
+};
 
 /// The init command creates a .jbackup directory in the current working
 /// directory, if one doesn't already exist.
 ///
-/// The .jbackup directory should contain the 'branches' and 'head' files.
-pub fn main() -> Result<(), String> {
+/// The .jbackup directory should contain the files: 'branches', 'head', 'config'.
+pub fn main(mut args: VecDeque<String>) -> Result<(), String> {
+    let mut parsed_args = arguments::Parser::new()
+        .option("--transformer")
+        .parse(args.drain(..));
+
+    let mut transformers = Vec::new();
+
+    if let Some(transformer) = parsed_args.options.remove("--transformer") {
+        if get_transformer(&transformer) {
+            transformers.push(transformer);
+        } else {
+            return Err(String::from("Invalid transformer: '") + &transformer + "'");
+        }
+    }
+
     simplify_result(fs::create_dir(JBACKUP_PATH))?;
 
     file_structure::BranchesFile {
@@ -19,6 +38,8 @@ pub fn main() -> Result<(), String> {
         curr_branch: String::from("main"),
     }
     .write()?;
+
+    file_structure::ConfigFile { transformers }.write()?;
 
     println!("Successfully initalized jbackup in the current working directory.");
     Ok(())

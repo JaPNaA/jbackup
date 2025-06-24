@@ -58,3 +58,20 @@ pub struct Arguments {
     pub options: HashMap<String, String>,
     pub normal: VecDeque<String>,
 }
+
+#[cfg(test)]
+mod test {
+    use crate::arguments::Parser;
+
+    #[test]
+    pub fn parses_options() {
+        assert_eq!(
+            Parser::new()
+                .option("a")
+                .parse(vec![String::from("a"), String::from("b")].into_iter())
+                .options
+                .get("a"),
+            Some(&String::from("b"))
+        );
+    }
+}
