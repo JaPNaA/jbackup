@@ -21,6 +21,20 @@ $ jbackup init
 
 The `init` subcommand creates a `.jbackup` directory (similar to the `.git` directory.) The `.jbackup` directory will contain all history information about it's parent directory.
 
+
+#### Transformers
+
+Transformers change files before storing and restoring. Changing files can make the compression better -- meaning smaller file sizes.
+
+Transformers can only be specified during repository initialization.
+
+```
+$ cd minecraftWorldToBackup
+$ jbackup init --transformer minecraft
+```
+
+The `--transformer` option tells `jbackup` there are minecraft files. `jbackup` can compress Minecraft files better with a transformer.
+
 ### Snapshots
 
 We can store 'snapshots' of the parent directory using the `snapshot` command.

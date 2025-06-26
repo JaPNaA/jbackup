@@ -1,5 +1,6 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
+    ffi::OsString,
     fs,
     io::{Read, Write},
 };
@@ -22,55 +23,74 @@ pub fn __debug_transform(mut args: VecDeque<String>) -> Result<(), String> {
     };
 
     // get list of region files from directory
-    // let files = simplify_result(fs::read_dir(&dir_path))?;
-    // let mut region_files = HashSet::new();
+    let files = simplify_result(fs::read_dir(&dir_path))?;
+    let mut region_files = HashSet::new();
 
-    // for file in files {
-    //     match file {
-    //         Err(_) => {}
-    //         Ok(file) => match file.file_name().to_str() {
-    //             None => {}
-    //             Some(file_name) => {
-    //                 let mut parts = file_name.split('.');
+    for file in files {
+        match file {
+            Err(_) => {}
+            Ok(file) => match file.file_name().to_str() {
+                None => {}
+                Some(file_name) => {
+                    let mut parts = file_name.split('.');
 
-    //                 match (parts.next(), parts.next(), parts.next(), parts.next()) {
-    //                     (Some("r"), Some(x), Some(y), Some("mca")) => {
-    //                         let x = i32::from_str_radix(x, 10);
-    //                         let y = i32::from_str_radix(y, 10);
+                    match (parts.next(), parts.next(), parts.next(), parts.next()) {
+                        (Some("r"), Some(x), Some(y), Some("mca")) => {
+                            let x = i32::from_str_radix(x, 10);
+                            let y = i32::from_str_radix(y, 10);
 
-    //                         match (x, y) {
-    //                             (Ok(x), Ok(y)) => {
-    //                                 region_files.insert((x, y));
-    //                             }
-    //                             _ => {}
-    //                         }
-    //                     }
-    //                     _ => {}
-    //                 }
-    //             }
-    //         },
-    //     }
-    // }
+                            match (x, y) {
+                                (Ok(x), Ok(y)) => {
+                                    region_files.insert((x, y));
+                                }
+                                _ => {}
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            },
+        }
+    }
 
-    let region_file = (0, 0);
+    // let region_file = (0, 0);
 
-    // for region_file in region_files {
-    let contents = simplify_result(fs::read(
-        String::from(&dir_path)
-            + "/r."
-            + &region_file.0.to_string()
-            + "."
-            + &region_file.1.to_string()
-            + ".mca",
-    ))?;
+    let mut total_size = 0;
 
-    let region = RegionFileFormatReader::new(contents);
-    // simplify_result(std::io::stdout().write_all(&transform_region_file_to_uncompressed(&region)?))?;
-    simplify_result(std::io::stdout().write_all(&transform_region_file_to_compressed(&region)?))?;
-    // println!("{}", nbt::to_human_readable(&mut data.iter()));
-    // }
+    for region_file in region_files {
+        let contents = simplify_result(fs::read(
+            String::from(&dir_path)
+                + "/r."
+                + &region_file.0.to_string()
+                + "."
+                + &region_file.1.to_string()
+                + ".mca",
+        ))?;
+
+        let region = RegionFileFormatReader::new(contents);
+        // simplify_result(std::io::stdout().write_all(&transform_region_file_to_uncompressed(&region)?))?;
+        total_size += transform_region_file_to_uncompressed(&region)?.len();
+        // simplify_result(
+        //     std::io::stdout().write_all(&transform_region_file_to_compressed(&region)?),
+        // )?;
+        // println!("{}", nbt::to_human_readable(&mut data.iter()));
+        println!("Processed, total size is now: {}", total_size);
+    }
+
+    println!(
+        "Decompressing would take {} bytes of disk space",
+        total_size
+    );
 
     Ok(())
+}
+
+pub fn transform_in(contents: Vec<u8>) -> Result<Vec<u8>, String> {
+    let region = RegionFileFormatReader::new(contents);
+    match transform_region_file_to_uncompressed(&region) {
+        Ok(x) => Ok(x),
+        Err(err) => Err(format!("Failed to transform file: {}", err)),
+    }
 }
 
 fn transform_region_file_to_uncompressed(
@@ -179,6 +199,15 @@ impl RegionFileFormatReader {
     }
 
     fn get_chunk_i(&self, i: usize) -> ChunkDescriptor {
+        // file too small, must be empty or corrupt
+        if self.contents.len() < SECTOR_SIZE * 2 {
+            return ChunkDescriptor {
+                offset: 0,
+                sector_count: 0,
+                timestamp: 0,
+            };
+        }
+
         let offset = u32::from_be_bytes([
             0,
             self.contents[i * 4],

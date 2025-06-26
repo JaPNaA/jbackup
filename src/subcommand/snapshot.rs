@@ -1,8 +1,17 @@
-use std::{collections::VecDeque, fs, process, time::SystemTime};
+use std::{
+    collections::VecDeque,
+    ffi::OsString,
+    fs::{self, File, Metadata},
+    process,
+    time::SystemTime,
+};
+
+use flate2::{Compression, GzBuilder};
 
 use crate::{
     JBACKUP_PATH, SNAPSHOTS_PATH, arguments, file_structure,
     io_util::{self, simplify_result},
+    transformer,
 };
 
 /// Creates a snapshot of the current working directory (excluding .jbackup).
@@ -60,7 +69,8 @@ pub fn main(mut args: VecDeque<String>) -> Result<(), String> {
             create_xdelta(CreateXDeltaArgs {
                 from_archive: &(staged_snapshot.get_full_payload_filename()?),
                 to_archive: &curr_snapshot_payload_full_name,
-                output_archive: &curr_snapshot_meta.get_diff_path_from_child_snapshot(&staged_snapshot.id),
+                output_archive: &curr_snapshot_meta
+                    .get_diff_path_from_child_snapshot(&staged_snapshot.id),
             })?;
 
             curr_snapshot_meta
@@ -156,16 +166,63 @@ fn create_full_snapshot() -> Result<file_structure::SnapshotMetaFile, String> {
 /// Creates a `tar` of the current working directly, excluding "./.jbackup".
 /// The `tar` is placed in the returned path.
 fn create_tmp_tar() -> Result<String, String> {
-    let output_path = String::from(JBACKUP_PATH) + "/tmp_snapshot.tar";
-    io_util::run_command_handle_failures(
-        process::Command::new("tar")
-            .arg(String::from("--exclude=") + JBACKUP_PATH)
-            .arg("-cf")
-            .arg(&output_path)
-            .arg("."),
-    )?;
+    let output_path = String::from(JBACKUP_PATH) + "/tmp_snapshot.tar.gz";
+    let output_file = simplify_result(File::create(&output_path))?;
 
-    Ok(output_path)
+    let gz_builder = GzBuilder::new().write(output_file, Compression::default());
+    let mut tar_builder = tar::Builder::new(gz_builder);
+
+    // tar_builder.append_data()
+
+    // walk through the current working directory, ascending order
+
+    // io_util::run_command_handle_failures(
+    //     process::Command::new("tar")
+    //         .arg(String::from("--exclude=") + JBACKUP_PATH)
+    //         .arg("-cf")
+    //         .arg(&output_path)
+    //         .arg("."),
+    // )?;
+
+    // Ok(output_path)
+    // todo: panics should be converted to Err
+    walk_file_tree(".".into(), &mut |file_path| {
+        let Some(file_path) = file_path.to_str() else {
+            return;
+        };
+
+        let Ok(file_metadata) = simplify_result(fs::metadata(&file_path)) else {
+            panic!("Failed to read file metadata for file {}", file_path)
+        };
+        let Ok(file_contents) = simplify_result(fs::read(&file_path)) else {
+            panic!("Failed to read file {}", file_path)
+        };
+
+        println!("Inserting: {}", file_path);
+
+        let data = if file_path.ends_with(".mca") {
+            match transformer::minecraft_mca::transform_in(file_contents) {
+                Ok(x) => x,
+                Err(err) => {
+                    panic!("{}", err);
+                }
+            }
+        } else {
+            file_contents
+        };
+
+        let mut header = tar::Header::new_gnu();
+        header.set_metadata(&file_metadata);
+        header.set_size(data.len().try_into().unwrap());
+
+        tar_builder
+            .append_data(&mut header, &file_path[2..], data.as_slice())
+            .unwrap();
+    })?;
+
+    simplify_result(tar_builder.into_inner())?;
+
+    Err(String::from("debugging..."))
 }
 
 fn calc_md5(file_path: &str) -> Result<String, String> {
@@ -227,6 +284,10 @@ fn commit_tmp_snapshot(
     }
 }
 
+/// Walks the file tree for some directory.
+///
+/// Ignores .jbackup directories that are a direct child of
+/// the specified directory.
 pub fn walk_file_tree(
     dir_path: OsString,
     file_handler: &mut impl FnMut(OsString),
