@@ -1,7 +1,7 @@
 use std::{
     collections::VecDeque,
     ffi::OsString,
-    fs::{self, File, Metadata},
+    fs::{self, File},
     process,
     time::SystemTime,
 };
@@ -172,30 +172,19 @@ fn create_tmp_tar() -> Result<String, String> {
     let gz_builder = GzBuilder::new().write(output_file, Compression::default());
     let mut tar_builder = tar::Builder::new(gz_builder);
 
-    // tar_builder.append_data()
-
-    // walk through the current working directory, ascending order
-
-    // io_util::run_command_handle_failures(
-    //     process::Command::new("tar")
-    //         .arg(String::from("--exclude=") + JBACKUP_PATH)
-    //         .arg("-cf")
-    //         .arg(&output_path)
-    //         .arg("."),
-    // )?;
-
-    // Ok(output_path)
-    // todo: panics should be converted to Err
     walk_file_tree(".".into(), &mut |file_path| {
         let Some(file_path) = file_path.to_str() else {
-            return;
+            return Ok(());
         };
 
         let Ok(file_metadata) = simplify_result(fs::metadata(&file_path)) else {
-            panic!("Failed to read file metadata for file {}", file_path)
+            return Err(format!(
+                "Failed to read file metadata for file {}",
+                file_path
+            ));
         };
         let Ok(file_contents) = simplify_result(fs::read(&file_path)) else {
-            panic!("Failed to read file {}", file_path)
+            return Err(format!("Failed to read file {}", file_path));
         };
 
         println!("Inserting: {}", file_path);
@@ -204,7 +193,7 @@ fn create_tmp_tar() -> Result<String, String> {
             match transformer::minecraft_mca::transform_in(file_contents) {
                 Ok(x) => x,
                 Err(err) => {
-                    panic!("{}", err);
+                    return Err(err);
                 }
             }
         } else {
@@ -218,6 +207,8 @@ fn create_tmp_tar() -> Result<String, String> {
         tar_builder
             .append_data(&mut header, &file_path[2..], data.as_slice())
             .unwrap();
+
+        Ok(())
     })?;
 
     simplify_result(tar_builder.into_inner())?;
@@ -290,7 +281,7 @@ fn commit_tmp_snapshot(
 /// the specified directory.
 pub fn walk_file_tree(
     dir_path: OsString,
-    file_handler: &mut impl FnMut(OsString),
+    file_handler: &mut impl FnMut(OsString) -> Result<(), String>,
 ) -> Result<(), String> {
     _walk_file_tree(dir_path, 0, file_handler)
 }
@@ -298,7 +289,7 @@ pub fn walk_file_tree(
 fn _walk_file_tree(
     dir_path: OsString,
     depth: usize,
-    file_handler: &mut impl FnMut(OsString),
+    file_handler: &mut impl FnMut(OsString) -> Result<(), String>,
 ) -> Result<(), String> {
     let files = simplify_result(fs::read_dir(&dir_path))?;
     let mut sorted_files = Vec::new();
@@ -341,7 +332,7 @@ fn _walk_file_tree(
         let mut path = dir_path.clone();
         path.push("/");
         path.push(file);
-        file_handler(path);
+        file_handler(path)?;
     }
 
     sorted_directories.sort();
