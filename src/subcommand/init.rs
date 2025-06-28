@@ -19,7 +19,7 @@ pub fn main(mut args: VecDeque<String>) -> Result<(), String> {
     let mut transformers = Vec::new();
 
     if let Some(transformer) = parsed_args.options.remove("--transformer") {
-        if get_transformer(&transformer) {
+        if let Some(_) = get_transformer(&transformer) {
             transformers.push(transformer);
         } else {
             return Err(String::from("Invalid transformer: '") + &transformer + "'");

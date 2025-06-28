@@ -9,9 +9,10 @@ use std::{
 use flate2::{Compression, GzBuilder};
 
 use crate::{
-    JBACKUP_PATH, SNAPSHOTS_PATH, arguments, file_structure,
+    JBACKUP_PATH, SNAPSHOTS_PATH, arguments,
+    file_structure::{self, ConfigFile},
     io_util::{self, simplify_result},
-    transformer,
+    transformer::{FileTransformer, get_transformer},
 };
 
 /// Creates a snapshot of the current working directory (excluding .jbackup).
@@ -166,6 +167,8 @@ fn create_full_snapshot() -> Result<file_structure::SnapshotMetaFile, String> {
 /// Creates a `tar` of the current working directly, excluding "./.jbackup".
 /// The `tar` is placed in the returned path.
 fn create_tmp_tar() -> Result<String, String> {
+    let transformers = get_transformers()?;
+
     let output_path = String::from(JBACKUP_PATH) + "/tmp_snapshot.tar.gz";
     let output_file = simplify_result(File::create(&output_path))?;
 
@@ -189,23 +192,18 @@ fn create_tmp_tar() -> Result<String, String> {
 
         println!("Inserting: {}", file_path);
 
-        let data = if file_path.ends_with(".mca") {
-            match transformer::minecraft_mca::transform_in(file_contents) {
-                Ok(x) => x,
-                Err(err) => {
-                    return Err(err);
-                }
-            }
-        } else {
-            file_contents
-        };
+        let mut transformed_data = file_contents;
+
+        for transformer in &transformers {
+            transformed_data = transformer.transform_in(&file_path, transformed_data)?;
+        }
 
         let mut header = tar::Header::new_gnu();
         header.set_metadata(&file_metadata);
-        header.set_size(data.len().try_into().unwrap());
+        header.set_size(transformed_data.len().try_into().unwrap());
 
         tar_builder
-            .append_data(&mut header, &file_path[2..], data.as_slice())
+            .append_data(&mut header, &file_path[2..], transformed_data.as_slice())
             .unwrap();
 
         Ok(())
@@ -213,7 +211,21 @@ fn create_tmp_tar() -> Result<String, String> {
 
     simplify_result(tar_builder.into_inner())?;
 
-    Err(String::from("debugging..."))
+    Ok(output_path)
+}
+
+fn get_transformers() -> Result<Vec<Box<dyn FileTransformer>>, String> {
+    let transformer_names = ConfigFile::read()?.transformers;
+    let mut transformers = Vec::with_capacity(transformer_names.len());
+
+    for name in transformer_names {
+        match get_transformer(&name) {
+            Some(t) => transformers.push(t),
+            None => return Err(format!("Error: unknown transformer '{}'", name)),
+        }
+    }
+
+    Ok(transformers)
 }
 
 fn calc_md5(file_path: &str) -> Result<String, String> {

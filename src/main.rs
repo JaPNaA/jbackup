@@ -87,10 +87,6 @@ fn run_with_arguments(args_iter: Args) -> Result<(), String> {
             Err(err) => Err(format!("Failed to restore: {err}")),
             Ok(_) => Ok(()),
         },
-        "__debug_filter" => match transformer::minecraft_mca::__debug_transform(args.normal) {
-            Err(err) => Err(format!("Failed to filter: {err}")),
-            Ok(_) => Ok(()),
-        },
 
         _ => Err(format!("Error: unknown command '{}'", command)),
     }
