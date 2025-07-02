@@ -15,10 +15,19 @@ impl McaTransformer {
     pub fn new() -> McaTransformer {
         McaTransformer {}
     }
+
+    fn accepts_file(file_path: &str) -> bool {
+        file_path.ends_with(".mca")
+    }
 }
 
 impl FileTransformer for McaTransformer {
     fn transform_in(&self, file_path: &str, contents: Vec<u8>) -> Result<Vec<u8>, String> {
+        // this transformer only works with .mca files
+        if !McaTransformer::accepts_file(file_path) {
+            return Ok(contents);
+        }
+
         let region = RegionFileFormatReader::new(contents);
         match transform_region_file_to_uncompressed(&region) {
             Ok(x) => Ok(x),
@@ -34,6 +43,11 @@ impl FileTransformer for McaTransformer {
         file_path: &str,
         transformed_contents: Vec<u8>,
     ) -> Result<Vec<u8>, String> {
+        // this transformer only works with .mca files
+        if !McaTransformer::accepts_file(file_path) {
+            return Ok(transformed_contents);
+        }
+
         let region = RegionFileFormatReader::new(transformed_contents);
         match transform_region_file_to_compressed(&region) {
             Ok(x) => Ok(x),
