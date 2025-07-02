@@ -1,4 +1,5 @@
 mod arguments;
+mod collections_util;
 mod file_structure;
 mod io_util;
 mod subcommand;

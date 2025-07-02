@@ -7,7 +7,7 @@ use std::{
 
 use crate::{
     BRANCHES_PATH, CONFIG_PATH, HEAD_PATH, JBACKUP_PATH, SNAPSHOTS_PATH, io_util::simplify_result,
-    tab_separated_key_value,
+    string_set, tab_separated_key_value,
 };
 
 pub struct BranchesFile {
@@ -151,12 +151,7 @@ impl SnapshotMetaFile {
     }
 
     fn get_multivalue_keys() -> HashSet<String> {
-        let mut keys = HashSet::new();
-        keys.insert(String::from("child"));
-        keys.insert(String::from("parent"));
-        keys.insert(String::from("dchild"));
-        keys.insert(String::from("dparent"));
-        keys
+        string_set!["child", "parent", "dchild", "dparent"]
     }
 
     fn serialize(&self) -> Result<String, String> {
@@ -256,8 +251,10 @@ pub struct ConfigFile {
 
 impl ConfigFile {
     pub fn read() -> Result<ConfigFile, String> {
-        let contents =
-            tab_separated_key_value::Config::single_value_only().read_file(CONFIG_PATH)?;
+        let contents = tab_separated_key_value::Config {
+            multivalue_keys: string_set!["transformer"],
+        }
+        .read_file(CONFIG_PATH)?;
         Ok(ConfigFile {
             transformers: match contents.multi_value.get("transformer") {
                 Some(x) => x.clone(),
