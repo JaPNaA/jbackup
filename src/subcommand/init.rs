@@ -4,7 +4,8 @@ use std::{
 };
 
 use crate::{
-    JBACKUP_PATH, arguments, file_structure, io_util::simplify_result, transformer::get_transformer,
+    JBACKUP_PATH, arguments, file_structure, transformer::get_transformer,
+    util::io_util::simplify_result,
 };
 
 /// The init command creates a .jbackup directory in the current working

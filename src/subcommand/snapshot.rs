@@ -6,7 +6,7 @@ use std::{
     time::{self, SystemTime},
 };
 
-use flate2::{Compression, GzBuilder};
+use flate2::Compression;
 use gzp::{
     deflate::Gzip,
     par::compress::{ParCompress, ParCompressBuilder},
@@ -15,8 +15,8 @@ use gzp::{
 use crate::{
     JBACKUP_PATH, SNAPSHOTS_PATH, arguments,
     file_structure::{self, ConfigFile},
-    io_util::{self, simplify_result},
     transformer::{FileTransformer, get_transformer},
+    util::io_util::{self, simplify_result},
 };
 
 /// Creates a snapshot of the current working directory (excluding .jbackup).

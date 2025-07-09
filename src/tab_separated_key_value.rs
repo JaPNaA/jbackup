@@ -1,9 +1,8 @@
+use crate::util::io_util::simplify_result;
 use std::{
     collections::{HashMap, HashSet},
     fs,
 };
-
-use crate::io_util::simplify_result;
 
 pub struct Config {
     pub multivalue_keys: HashSet<String>,

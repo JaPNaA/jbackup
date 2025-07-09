@@ -6,7 +6,7 @@ use std::{
 use crate::{
     JBACKUP_PATH, SNAPSHOTS_PATH,
     file_structure::{self, SnapshotFullType, SnapshotMetaFile},
-    io_util::{self, simplify_result},
+    util::io_util::{self, simplify_result},
 };
 
 pub fn main(mut args: VecDeque<String>) -> Result<(), String> {

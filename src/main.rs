@@ -1,10 +1,9 @@
 mod arguments;
-mod collections_util;
 mod file_structure;
-mod io_util;
 mod subcommand;
 mod tab_separated_key_value;
 mod transformer;
+mod util;
 
 use std::{
     env::{self, Args},

@@ -6,8 +6,8 @@ use std::{
 };
 
 use crate::{
-    BRANCHES_PATH, CONFIG_PATH, HEAD_PATH, JBACKUP_PATH, SNAPSHOTS_PATH, io_util::simplify_result,
-    string_set, tab_separated_key_value,
+    BRANCHES_PATH, CONFIG_PATH, HEAD_PATH, JBACKUP_PATH, SNAPSHOTS_PATH, string_set,
+    tab_separated_key_value, util::io_util::simplify_result,
 };
 
 pub struct BranchesFile {

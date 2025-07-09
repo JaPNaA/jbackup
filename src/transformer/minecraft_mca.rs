@@ -2,7 +2,7 @@ use std::io::{Read, Write};
 
 use flate2::{read::ZlibDecoder, write::ZlibEncoder};
 
-use crate::{io_util::simplify_result, transformer::FileTransformer};
+use crate::{transformer::FileTransformer, util::io_util::simplify_result};
 
 const REGION_WIDTH_CHUNK: usize = 32;
 const REGION_HEIGHT_CHUNK: usize = 32;
