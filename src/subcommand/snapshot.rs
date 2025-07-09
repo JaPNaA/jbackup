@@ -3,10 +3,14 @@ use std::{
     ffi::OsString,
     fs::{self, File},
     process,
-    time::SystemTime,
+    time::{self, SystemTime},
 };
 
 use flate2::{Compression, GzBuilder};
+use gzp::{
+    deflate::Gzip,
+    par::compress::{ParCompress, ParCompressBuilder},
+};
 
 use crate::{
     JBACKUP_PATH, SNAPSHOTS_PATH, arguments,
@@ -172,8 +176,14 @@ fn create_tmp_tar() -> Result<String, String> {
     let output_path = String::from(JBACKUP_PATH) + "/tmp_snapshot.tar.gz";
     let output_file = simplify_result(File::create(&output_path))?;
 
-    let gz_builder = GzBuilder::new().write(output_file, Compression::default());
+    let gz_builder: ParCompress<Gzip> = ParCompressBuilder::new()
+        .compression_level(Compression::fast()) // todo: this should be configurable
+        .from_writer(output_file);
     let mut tar_builder = tar::Builder::new(gz_builder);
+
+    // benchmark
+    let mut transform_time = 0;
+    let mut compress_time = 0;
 
     walk_file_tree(".".into(), &mut |file_path| {
         let Some(file_path) = file_path.to_str() else {
@@ -192,24 +202,52 @@ fn create_tmp_tar() -> Result<String, String> {
 
         println!("Inserting: {}", file_path);
 
+        let transform_time_start = time::SystemTime::now();
         let mut transformed_data = file_contents;
 
         for transformer in &transformers {
             transformed_data = transformer.transform_in(&file_path, transformed_data)?;
         }
 
+        let transform_end_time = time::SystemTime::now();
+        transform_time += transform_end_time
+            .duration_since(transform_time_start)
+            .map(|x| x.as_nanos())
+            .unwrap_or(0);
+
         let mut header = tar::Header::new_gnu();
         header.set_metadata(&file_metadata);
         header.set_size(transformed_data.len().try_into().unwrap());
+
+        let compress_time_start = time::SystemTime::now();
 
         tar_builder
             .append_data(&mut header, &file_path[2..], transformed_data.as_slice())
             .unwrap();
 
+        let compress_time_end = time::SystemTime::now();
+        compress_time += compress_time_end
+            .duration_since(compress_time_start)
+            .map(|x| x.as_nanos())
+            .unwrap_or(0);
+
         Ok(())
     })?;
 
+    let compress_time_start = time::SystemTime::now();
+
     simplify_result(tar_builder.into_inner())?;
+
+    let compress_time_end = time::SystemTime::now();
+    compress_time += compress_time_end
+        .duration_since(compress_time_start)
+        .map(|x| x.as_nanos())
+        .unwrap_or(0);
+
+    eprintln!(
+        "Transform time: {} ns, Compress time: {} ns",
+        transform_time, compress_time
+    );
 
     Ok(output_path)
 }

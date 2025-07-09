@@ -35,6 +35,14 @@ $ jbackup init --transformer minecraft
 
 The `--transformer` option tells `jbackup` there are minecraft files. `jbackup` can compress Minecraft files better with a transformer.
 
+### Config (Not implementeed)
+
+You may configure the options to compress: None / Fast / Default / Best
+
+None skips the compression step. This may be ideal for small files or files that have already been compressed. Do not use None compression with tranformers! Transformers often decompress input files to achieve smaller deltas (smaller backups).
+
+If not specified, the default compression is Fast.
+
 ### Snapshots
 
 We can store 'snapshots' of the parent directory using the `snapshot` command.
