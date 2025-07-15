@@ -1,22 +1,32 @@
 use std::{
     collections::VecDeque,
-    sync::{Arc, Mutex},
+    sync::mpsc,
     thread::{self, JoinHandle, yield_now},
-    time::Duration,
+    usize,
 };
 
 /// The multithreaded pipeline takes a serial list of inputs, distributes
 /// each input to a thread, and combines them back into the same order
 /// of the inputs.
 pub struct MultithreadPipeline<I: Sync + Send, O: Sync + Send, C> {
-    next_input: Arc<Mutex<Option<(DataOrCommand<I>, usize)>>>,
     next_input_index: usize,
     // keeps track to ensure completion of work before terminating
-    number_outputs_handled: usize,
+    number_outputs_read: usize,
     output_context: C,
     output_handler: Box<dyn FnMut(&mut C, O)>,
-    output: Arc<Mutex<OutputBuffer<O>>>,
-    threads: Vec<JoinHandle<()>>,
+    output: OutputBuffer<O>,
+    // Tuples: Output, input index, thread index
+    output_channel: (
+        mpsc::Sender<(O, usize, usize)>,
+        mpsc::Receiver<(O, usize, usize)>,
+    ),
+    threads: Vec<ThreadState<I>>,
+}
+
+struct ThreadState<I: Sync + Send> {
+    input_channel: mpsc::Sender<(DataOrCommand<I>, usize)>,
+    is_working: bool,
+    join_handle: JoinHandle<()>,
 }
 
 struct OutputBuffer<O> {
@@ -33,13 +43,13 @@ enum DataOrCommand<I> {
 impl<I: Sync + Send + 'static, O: Sync + Send + 'static, C> MultithreadPipeline<I, O, C> {
     pub fn new(output_context: C, output_handler: Box<dyn FnMut(&mut C, O)>) -> Self {
         Self {
-            next_input: Arc::new(Mutex::new(None)),
             next_input_index: 0,
-            number_outputs_handled: 0,
-            output: Arc::new(Mutex::new(OutputBuffer {
+            number_outputs_read: 0,
+            output_channel: mpsc::channel(),
+            output: OutputBuffer {
                 offset: 0,
                 buffer: VecDeque::new(),
-            })),
+            },
             threads: Vec::new(),
             output_context,
             output_handler,
@@ -49,10 +59,10 @@ impl<I: Sync + Send + 'static, O: Sync + Send + 'static, C> MultithreadPipeline<
     /// Writes an input to the pipeline. Will wait until the next input is writeable.
     /// This method should only be called by one thread.
     pub fn write(&mut self, input: I) {
-        self._write(DataOrCommand::Data(input));
+        self._write(DataOrCommand::Data(input)).unwrap();
     }
 
-    fn _write(&mut self, input: DataOrCommand<I>) {
+    fn _write(&mut self, input: DataOrCommand<I>) -> Result<(), ()> {
         // keep waiting if future tasks are being finished too fast, keep buffer size down
         // // todo make 8 not hard-coded
         // while self.output.lock().unwrap().buffer.len() > 8 {
@@ -63,54 +73,115 @@ impl<I: Sync + Send + 'static, O: Sync + Send + 'static, C> MultithreadPipeline<
         let index = self.next_input_index;
         self.next_input_index += 1;
 
-        loop {
-            let mut next_input = self.next_input.lock().unwrap();
-            if next_input.is_none() {
-                let _ = next_input.insert((input, index));
-                break;
+        for thread in &mut self.threads {
+            if !thread.is_working {
+                thread.input_channel.send((input, index)).unwrap();
+                return Ok(());
             }
-            drop(next_input);
-            yield_now();
         }
+
+        self.poll_blocking();
+
+        for thread in &mut self.threads {
+            if !thread.is_working {
+                thread.input_channel.send((input, index)).unwrap();
+                return Ok(());
+            }
+        }
+        Err(())
     }
 
     /// Polls the output buffer to check if there are any new outputs to handle.
     pub fn poll(&mut self) {
-        while let Some(res) = self.read() {
-            (self.output_handler)(&mut self.output_context, res);
-        }
+        self.read_to_buffer();
+        self.flush_buffer();
+    }
+
+    /// Does not return until a thread finishes. If finished block is not the
+    /// next block (finished out-of-order), the block will be added to the buffer
+    /// and no processing will happen.
+    pub fn poll_blocking(&mut self) {
+        self.read_to_buffer_blocking();
+        self.flush_buffer();
     }
 
     /// Keeps polling until the last output has been handled. Will busy-wait.
     pub fn finalize(mut self) -> C {
         let number_inputs = self.next_input_index;
 
-        for _ in 0..self.threads.len() {
-            self._write(DataOrCommand::Terminate);
+        for thread in &self.threads {
+            thread
+                .input_channel
+                .send((DataOrCommand::Terminate, 0))
+                .unwrap();
         }
 
-        while self.number_outputs_handled < number_inputs {
-            self.poll();
-            yield_now();
+        while self.number_outputs_read < number_inputs {
+            self.poll_blocking();
+        }
+
+        for thread in self.threads {
+            thread.join_handle.join().unwrap();
         }
 
         return self.output_context;
     }
 
-    fn read(&mut self) -> Option<O> {
-        let mut output = self.output.lock().unwrap();
-        if output.buffer.is_empty() {
+    fn read_to_buffer(&mut self) {
+        loop {
+            let output = self.output_channel.1.try_recv();
+            if let Ok(output_tuple) = output {
+                self.process_output_tuple(output_tuple);
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn read_to_buffer_blocking(&mut self) {
+        let output = self.output_channel.1.recv().unwrap();
+        self.process_output_tuple(output);
+    }
+
+    fn try_read_from_buffer(&mut self) -> Option<O> {
+        if self.output.buffer.is_empty() {
             return None;
         }
-        let next_item = output.buffer.get(0)?;
+        let next_item = self.output.buffer.get(0)?;
         if next_item.is_none() {
             return None;
         }
 
-        let next_item = output.buffer.pop_front()?;
-        output.offset += 1;
-        self.number_outputs_handled += 1;
+        let next_item = self.output.buffer.pop_front()?;
+        self.output.offset += 1;
+        self.number_outputs_read += 1;
         return next_item;
+    }
+
+    fn flush_buffer(&mut self) {
+        while let Some(res) = self.try_read_from_buffer() {
+            (self.output_handler)(&mut self.output_context, res);
+        }
+    }
+
+    fn process_output_tuple(
+        &mut self,
+        (output_data, input_index, thread_index): (O, usize, usize),
+    ) {
+        self.threads[thread_index].is_working = false;
+
+        let output_index = input_index - self.output.offset;
+        while self.output.buffer.len() <= output_index {
+            self.output.buffer.push_back(None);
+        }
+        self.output.buffer[output_index].replace(output_data);
+
+        {
+            let buf_len = self.output.buffer.len();
+            if buf_len > 8 {
+                println!("Warn output buff length is larger: {}", buf_len);
+            }
+        }
     }
 
     pub fn spawn_workers<Init: Send + Clone + 'static>(
@@ -120,38 +191,36 @@ impl<I: Sync + Send + 'static, O: Sync + Send + 'static, C> MultithreadPipeline<
         process_fn: impl Fn(&Init, I) -> O + Sync + Send + Copy + 'static,
     ) {
         for _ in 0..num_workers {
-            let next_input_lock = Arc::clone(&self.next_input);
-            let output_lock = Arc::clone(&self.output);
             let thread_init = init.clone();
 
-            self.threads.push(thread::spawn(move || {
+            let (input_tx, input_rx) = mpsc::channel();
+            let output_tx = self.output_channel.0.clone();
+            let thread_index = self.threads.len();
+
+            let join_handle = thread::spawn(move || {
                 loop {
-                    let mut next_input_unlocked = next_input_lock.lock().unwrap();
-                    let next_input = next_input_unlocked.take();
-                    drop(next_input_unlocked);
+                    let next_input = input_rx.recv().unwrap();
 
-                    if let Some((DataOrCommand::Data(input_data), input_index)) = next_input {
-                        let output = process_fn(&thread_init, input_data);
-
-                        let mut output_unlocked = output_lock.lock().unwrap();
-                        let output_index = input_index - output_unlocked.offset;
-                        while output_unlocked.buffer.len() <= output_index {
-                            output_unlocked.buffer.push_back(None);
-                        }
-                        output_unlocked.buffer[output_index].replace(output);
-                        {
-                            let buf_len = output_unlocked.buffer.len();
-                            if buf_len > 8 {
-                                println!("Warn output buff length is larger: {}", buf_len);
+                    match next_input {
+                        (DataOrCommand::Data(input_data), input_index) => {
+                            if let Err(err) = output_tx.send((
+                                process_fn(&thread_init, input_data),
+                                input_index,
+                                thread_index,
+                            )) {
+                                panic!("{}", err);
                             }
                         }
-                    } else if let Some((DataOrCommand::Terminate, _)) = next_input {
-                        return;
-                    } else {
-                        yield_now();
+                        (DataOrCommand::Terminate, _) => return,
                     }
                 }
-            }));
+            });
+
+            self.threads.push(ThreadState {
+                join_handle,
+                is_working: false,
+                input_channel: input_tx,
+            });
         }
     }
 }
@@ -171,7 +240,6 @@ pub fn main() -> Result<(), String> {
         8,
         || {},
         |_, x| {
-            // println!("{} + 1", x);
             return x + 1;
         },
     );
