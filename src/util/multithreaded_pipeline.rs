@@ -1,7 +1,7 @@
 use std::{
     collections::VecDeque,
     sync::mpsc,
-    thread::{self, JoinHandle, yield_now},
+    thread::{self, JoinHandle},
     usize,
 };
 
@@ -59,36 +59,23 @@ impl<I: Sync + Send + 'static, O: Sync + Send + 'static, C> MultithreadPipeline<
     /// Writes an input to the pipeline. Will wait until the next input is writeable.
     /// This method should only be called by one thread.
     pub fn write(&mut self, input: I) {
-        self._write(DataOrCommand::Data(input)).unwrap();
-    }
-
-    fn _write(&mut self, input: DataOrCommand<I>) -> Result<(), ()> {
-        // keep waiting if future tasks are being finished too fast, keep buffer size down
-        // // todo make 8 not hard-coded
-        // while self.output.lock().unwrap().buffer.len() > 8 {
-        //     self.poll();
-        //     yield_now();
-        // }
-
         let index = self.next_input_index;
         self.next_input_index += 1;
 
-        for thread in &mut self.threads {
-            if !thread.is_working {
-                thread.input_channel.send((input, index)).unwrap();
-                return Ok(());
+        loop {
+            for thread in &mut self.threads {
+                if !thread.is_working {
+                    thread.is_working = true;
+                    thread
+                        .input_channel
+                        .send((DataOrCommand::Data(input), index))
+                        .unwrap();
+                    return;
+                }
             }
-        }
 
-        self.poll_blocking();
-
-        for thread in &mut self.threads {
-            if !thread.is_working {
-                thread.input_channel.send((input, index)).unwrap();
-                return Ok(());
-            }
+            self.poll_blocking();
         }
-        Err(())
     }
 
     /// Polls the output buffer to check if there are any new outputs to handle.
@@ -125,63 +112,6 @@ impl<I: Sync + Send + 'static, O: Sync + Send + 'static, C> MultithreadPipeline<
         }
 
         return self.output_context;
-    }
-
-    fn read_to_buffer(&mut self) {
-        loop {
-            let output = self.output_channel.1.try_recv();
-            if let Ok(output_tuple) = output {
-                self.process_output_tuple(output_tuple);
-            } else {
-                break;
-            }
-        }
-    }
-
-    fn read_to_buffer_blocking(&mut self) {
-        let output = self.output_channel.1.recv().unwrap();
-        self.process_output_tuple(output);
-    }
-
-    fn try_read_from_buffer(&mut self) -> Option<O> {
-        if self.output.buffer.is_empty() {
-            return None;
-        }
-        let next_item = self.output.buffer.get(0)?;
-        if next_item.is_none() {
-            return None;
-        }
-
-        let next_item = self.output.buffer.pop_front()?;
-        self.output.offset += 1;
-        self.number_outputs_read += 1;
-        return next_item;
-    }
-
-    fn flush_buffer(&mut self) {
-        while let Some(res) = self.try_read_from_buffer() {
-            (self.output_handler)(&mut self.output_context, res);
-        }
-    }
-
-    fn process_output_tuple(
-        &mut self,
-        (output_data, input_index, thread_index): (O, usize, usize),
-    ) {
-        self.threads[thread_index].is_working = false;
-
-        let output_index = input_index - self.output.offset;
-        while self.output.buffer.len() <= output_index {
-            self.output.buffer.push_back(None);
-        }
-        self.output.buffer[output_index].replace(output_data);
-
-        {
-            let buf_len = self.output.buffer.len();
-            if buf_len > 8 {
-                println!("Warn output buff length is larger: {}", buf_len);
-            }
-        }
     }
 
     pub fn spawn_workers<Init: Send + Clone + 'static>(
@@ -222,6 +152,56 @@ impl<I: Sync + Send + 'static, O: Sync + Send + 'static, C> MultithreadPipeline<
                 input_channel: input_tx,
             });
         }
+    }
+
+    fn read_to_buffer(&mut self) {
+        loop {
+            let output = self.output_channel.1.try_recv();
+            if let Ok(output_tuple) = output {
+                self.process_output_tuple(output_tuple);
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn read_to_buffer_blocking(&mut self) {
+        let output = self.output_channel.1.recv().unwrap();
+        self.process_output_tuple(output);
+    }
+
+    fn flush_buffer(&mut self) {
+        while let Some(res) = self.try_read_from_buffer() {
+            (self.output_handler)(&mut self.output_context, res);
+        }
+    }
+
+    fn try_read_from_buffer(&mut self) -> Option<O> {
+        if self.output.buffer.is_empty() {
+            return None;
+        }
+        let next_item = self.output.buffer.get(0)?;
+        if next_item.is_none() {
+            return None;
+        }
+
+        let next_item = self.output.buffer.pop_front()?;
+        self.output.offset += 1;
+        self.number_outputs_read += 1;
+        return next_item;
+    }
+
+    fn process_output_tuple(
+        &mut self,
+        (output_data, input_index, thread_index): (O, usize, usize),
+    ) {
+        self.threads[thread_index].is_working = false;
+
+        let output_index = input_index - self.output.offset;
+        while self.output.buffer.len() <= output_index {
+            self.output.buffer.push_back(None);
+        }
+        self.output.buffer[output_index].replace(output_data);
     }
 }
 
