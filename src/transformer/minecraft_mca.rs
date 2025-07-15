@@ -9,6 +9,7 @@ const REGION_HEIGHT_CHUNK: usize = 32;
 const CHUNKS_IN_REGION: usize = REGION_WIDTH_CHUNK * REGION_HEIGHT_CHUNK;
 const SECTOR_SIZE: usize = 4096;
 
+// #[derive(Clone)]
 pub struct McaTransformer {}
 
 impl McaTransformer {

@@ -1,9 +1,10 @@
 use std::{
     collections::VecDeque,
     ffi::OsString,
-    fs::{self, File},
+    fs::{self, File, Metadata},
     process,
-    time::{self, SystemTime},
+    sync::Arc,
+    time::SystemTime,
 };
 
 use flate2::Compression;
@@ -16,7 +17,10 @@ use crate::{
     JBACKUP_PATH, SNAPSHOTS_PATH, arguments,
     file_structure::{self, ConfigFile},
     transformer::{FileTransformer, get_transformer},
-    util::io_util::{self, simplify_result},
+    util::{
+        io_util::{self, simplify_result},
+        multithreaded_pipeline::MultithreadPipeline,
+    },
 };
 
 /// Creates a snapshot of the current working directory (excluding .jbackup).
@@ -171,23 +175,40 @@ fn create_full_snapshot() -> Result<file_structure::SnapshotMetaFile, String> {
 /// Creates a `tar` of the current working directly, excluding "./.jbackup".
 /// The `tar` is placed in the returned path.
 fn create_tmp_tar() -> Result<String, String> {
-    let transformers = get_transformers()?;
-
     let output_path = String::from(JBACKUP_PATH) + "/tmp_snapshot.tar.gz";
     let output_file = simplify_result(File::create(&output_path))?;
 
     let gz_builder: ParCompress<Gzip> = ParCompressBuilder::new()
         .compression_level(Compression::fast()) // todo: this should be configurable
         .from_writer(output_file);
-    let mut tar_builder = tar::Builder::new(gz_builder);
+    let tar_builder = Box::new(tar::Builder::new(gz_builder));
 
-    // benchmark
-    let mut transform_time = 0;
-    let mut compress_time = 0;
+    let mut transformer_pipeline =
+        MultithreadPipeline::<OsString, Result<(Vec<u8>, Metadata, String), String>, _>::new(
+            tar_builder,
+            Box::new(move |tar_builder, res| match res {
+                Ok((transformed_data, file_metadata, file_path)) => {
+                    let mut header = tar::Header::new_gnu();
+                    header.set_metadata(&file_metadata);
+                    header.set_size(transformed_data.len().try_into().unwrap());
 
-    walk_file_tree(".".into(), &mut |file_path| {
+                    tar_builder
+                        .append_data(&mut header, &file_path[2..], transformed_data.as_slice())
+                        .unwrap();
+                }
+                Err(err) => panic!("{}", err),
+            }),
+        );
+
+    let transformer_names = ConfigFile::read()?.transformers;
+    let transformers_arc = Arc::new(get_transformers(&transformer_names)?);
+
+    transformer_pipeline.spawn_workers(8, transformers_arc, |transformers, file_path| {
         let Some(file_path) = file_path.to_str() else {
-            return Ok(());
+            return Err(format!(
+                "Failed to convert file path '{:?}' to UTF-8",
+                file_path,
+            ));
         };
 
         let Ok(file_metadata) = simplify_result(fs::metadata(&file_path)) else {
@@ -202,58 +223,29 @@ fn create_tmp_tar() -> Result<String, String> {
 
         println!("Inserting: {}", file_path);
 
-        let transform_time_start = time::SystemTime::now();
         let mut transformed_data = file_contents;
 
-        for transformer in &transformers {
+        for transformer in transformers.iter() {
             transformed_data = transformer.transform_in(&file_path, transformed_data)?;
         }
 
-        let transform_end_time = time::SystemTime::now();
-        transform_time += transform_end_time
-            .duration_since(transform_time_start)
-            .map(|x| x.as_nanos())
-            .unwrap_or(0);
+        Ok((transformed_data, file_metadata, String::from(file_path)))
+    });
 
-        let mut header = tar::Header::new_gnu();
-        header.set_metadata(&file_metadata);
-        header.set_size(transformed_data.len().try_into().unwrap());
-
-        let compress_time_start = time::SystemTime::now();
-
-        tar_builder
-            .append_data(&mut header, &file_path[2..], transformed_data.as_slice())
-            .unwrap();
-
-        let compress_time_end = time::SystemTime::now();
-        compress_time += compress_time_end
-            .duration_since(compress_time_start)
-            .map(|x| x.as_nanos())
-            .unwrap_or(0);
-
+    walk_file_tree(".".into(), &mut |new_file_path| {
+        transformer_pipeline.write(new_file_path);
+        transformer_pipeline.poll();
         Ok(())
     })?;
 
-    let compress_time_start = time::SystemTime::now();
-
-    simplify_result(tar_builder.into_inner())?;
-
-    let compress_time_end = time::SystemTime::now();
-    compress_time += compress_time_end
-        .duration_since(compress_time_start)
-        .map(|x| x.as_nanos())
-        .unwrap_or(0);
-
-    eprintln!(
-        "Transform time: {} ns, Compress time: {} ns",
-        transform_time, compress_time
-    );
+    simplify_result(transformer_pipeline.finalize().into_inner())?;
 
     Ok(output_path)
 }
 
-fn get_transformers() -> Result<Vec<Box<dyn FileTransformer>>, String> {
-    let transformer_names = ConfigFile::read()?.transformers;
+fn get_transformers(
+    transformer_names: &Vec<String>,
+) -> Result<Vec<Box<dyn FileTransformer + Sync + Send>>, String> {
     let mut transformers = Vec::with_capacity(transformer_names.len());
 
     for name in transformer_names {

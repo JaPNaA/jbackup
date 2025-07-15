@@ -10,6 +10,8 @@ use std::{
     process::ExitCode,
 };
 
+use crate::util::multithreaded_pipeline;
+
 pub const JBACKUP_PATH: &str = "./.jbackup";
 pub const SNAPSHOTS_PATH: &str = "./.jbackup/snapshots";
 pub const BRANCHES_PATH: &str = "./.jbackup/branches";
@@ -85,6 +87,11 @@ fn run_with_arguments(args_iter: Args) -> Result<(), String> {
         // data will be stored in the "./.jbackup/_debug" directory.
         "__debug_restore" => match subcommand::__debug_restore::main(args.normal) {
             Err(err) => Err(format!("Failed to restore: {err}")),
+            Ok(_) => Ok(()),
+        },
+
+        "__debug_multithread" => match multithreaded_pipeline::main() {
+            Err(err) => Err(err),
             Ok(_) => Ok(()),
         },
 
