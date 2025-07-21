@@ -16,7 +16,7 @@ use gzp::{
 use crate::{
     JBACKUP_PATH, SNAPSHOTS_PATH, arguments,
     file_structure::{self, ConfigFile},
-    transformer::{FileTransformer, get_transformer},
+    transformer::get_transformers,
     util::{
         io_util::{self, simplify_result},
         multithreaded_pipeline::MultithreadPipeline,
@@ -241,21 +241,6 @@ fn create_tmp_tar() -> Result<String, String> {
     simplify_result(transformer_pipeline.finalize().into_inner())?;
 
     Ok(output_path)
-}
-
-fn get_transformers(
-    transformer_names: &Vec<String>,
-) -> Result<Vec<Box<dyn FileTransformer + Sync + Send>>, String> {
-    let mut transformers = Vec::with_capacity(transformer_names.len());
-
-    for name in transformer_names {
-        match get_transformer(&name) {
-            Some(t) => transformers.push(t),
-            None => return Err(format!("Error: unknown transformer '{}'", name)),
-        }
-    }
-
-    Ok(transformers)
 }
 
 fn calc_md5(file_path: &str) -> Result<String, String> {

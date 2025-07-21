@@ -94,21 +94,10 @@ fn run_with_arguments(args_iter: Args) -> Result<(), String> {
             Ok(_) => Ok(()),
         },
 
-        "__debug_multithread" => match multithreaded_pipeline::main() {
-            Err(err) => Err(err),
+        "__debug_transform_out" => match subcommand::__debug_restore::main2(args.normal) {
+            Err(err) => Err(format!("Failed to transform out: {err}")),
             Ok(_) => Ok(()),
         },
-
-        "__debug_transform_out" => {
-            let Some(t) = get_transformer("minecraft_mca") else {
-                return Err(String::from("Cannot get transformer"));
-            };
-            let fname = args.normal.get(0).unwrap();
-            simplify_result(fs::write(
-                fname.to_owned() + "-r",
-                t.transform_out("r.0.0.mca", fs::read(fname).unwrap())?,
-            ))
-        }
 
         _ => Err(format!("Error: unknown command '{}'", command)),
     }

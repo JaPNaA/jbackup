@@ -204,33 +204,3 @@ impl<I: Sync + Send + 'static, O: Sync + Send + 'static, C> MultithreadPipeline<
         self.output.buffer[output_index].replace(output_data);
     }
 }
-
-pub fn main() -> Result<(), String> {
-    let mut mtp = MultithreadPipeline::<u32, u32, Box<u32>>::new(
-        Box::new(1),
-        Box::new(move |expected_next, res| {
-            if res != **expected_next {
-                eprintln!("Error: Got {} when expecting {}", res, expected_next);
-            }
-            **expected_next += 1;
-        }),
-    );
-
-    mtp.spawn_workers(
-        8,
-        || {},
-        |_, x| {
-            return x + 1;
-        },
-    );
-
-    for i in 0..1000 {
-        mtp.poll();
-        mtp.write(i);
-    }
-
-    let final_output = mtp.finalize();
-    println!("{}", final_output);
-
-    Ok(())
-}

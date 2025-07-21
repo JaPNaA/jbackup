@@ -1,11 +1,16 @@
 use std::{
     collections::{HashMap, VecDeque},
-    fs, process,
+    fs::{self, File},
+    io::{BufReader, Read},
+    process,
 };
+
+use flate2::bufread::GzDecoder;
 
 use crate::{
     JBACKUP_PATH, SNAPSHOTS_PATH,
-    file_structure::{self, SnapshotFullType, SnapshotMetaFile},
+    file_structure::{self, ConfigFile, SnapshotFullType, SnapshotMetaFile},
+    transformer::get_transformers,
     util::io_util::{self, simplify_result},
 };
 
@@ -64,6 +69,53 @@ pub fn main(mut args: VecDeque<String>) -> Result<(), String> {
         println!("Restored to: {}", follow_path(path)?);
     } else {
         println!("Path not found to {}", snapshot_id);
+    }
+
+    Ok(())
+}
+
+pub fn main2(mut args: VecDeque<String>) -> Result<(), String> {
+    let archive_path = match args.pop_front() {
+        None => {
+            return Err(String::from("Please specify an archive to transform out"));
+        }
+        Some(x) => x,
+    };
+
+    let transformer_names = ConfigFile::read()?.transformers;
+    let transformers = get_transformers(&transformer_names)?;
+
+    let archive_file = simplify_result(File::open(archive_path))?;
+    let gzdec = GzDecoder::new(BufReader::new(archive_file));
+    let mut tar_reader = tar::Archive::new(gzdec);
+
+    for entry in simplify_result(tar_reader.entries())? {
+        let mut entry = match entry {
+            Ok(x) => x,
+            Err(err) => {
+                eprintln!("Warn: failed to read tar entry: {:?}", err);
+                continue;
+            }
+        };
+        let path = match entry.path() {
+            Ok(x) => String::from(x.to_string_lossy()),
+            Err(err) => {
+                eprintln!("Warn: failed to get path for tar entry: {:?}", err);
+                continue;
+            }
+        };
+
+        let mut curr = Vec::new();
+        simplify_result(entry.read_to_end(&mut curr))?;
+
+        for transformer in &transformers {
+            curr = transformer.transform_out(&path, curr)?;
+        }
+
+        simplify_result(fs::write(
+            String::from(".jbackup/tmp-restored/") + &path.replace("/", "-"),
+            curr,
+        ))?;
     }
 
     Ok(())
