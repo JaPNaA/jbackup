@@ -78,12 +78,12 @@ fn transform_region_file_to_compressed(reader: &RegionFileFormatReader) -> Resul
     for i in 0..CHUNKS_IN_REGION {
         let desc = reader.get_chunk_i(i);
 
-        let payload = reader.read_chunk_uncompressed(&desc)?;
-        let mut encoder = ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
-        simplify_result(encoder.write_all(&payload))?;
-        let compressed_payload = simplify_result(encoder.finish())?;
-
         if desc.is_exists() {
+            let payload = reader.read_chunk_uncompressed(&desc)?;
+            let mut encoder = ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+            simplify_result(encoder.write_all(&payload))?;
+            let compressed_payload = simplify_result(encoder.finish())?;
+
             // compression scheme 2 = zlib
             writer.add_chunk(i, desc.timestamp, 2, compressed_payload);
         }

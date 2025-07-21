@@ -7,10 +7,14 @@ mod util;
 
 use std::{
     env::{self, Args},
+    fs,
     process::ExitCode,
 };
 
-use crate::util::multithreaded_pipeline;
+use crate::{
+    transformer::get_transformer,
+    util::{io_util::simplify_result, multithreaded_pipeline},
+};
 
 pub const JBACKUP_PATH: &str = "./.jbackup";
 pub const SNAPSHOTS_PATH: &str = "./.jbackup/snapshots";
@@ -94,6 +98,17 @@ fn run_with_arguments(args_iter: Args) -> Result<(), String> {
             Err(err) => Err(err),
             Ok(_) => Ok(()),
         },
+
+        "__debug_transform_out" => {
+            let Some(t) = get_transformer("minecraft_mca") else {
+                return Err(String::from("Cannot get transformer"));
+            };
+            let fname = args.normal.get(0).unwrap();
+            simplify_result(fs::write(
+                fname.to_owned() + "-r",
+                t.transform_out("r.0.0.mca", fs::read(fname).unwrap())?,
+            ))
+        }
 
         _ => Err(format!("Error: unknown command '{}'", command)),
     }
