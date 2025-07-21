@@ -62,6 +62,8 @@ pub fn main(mut args: VecDeque<String>) -> Result<(), String> {
 
     if path_found {
         println!("Restored to: {}", follow_path(path)?);
+    } else {
+        println!("Path not found to {}", snapshot_id);
     }
 
     Ok(())
@@ -75,8 +77,8 @@ fn follow_path(path: Vec<SnapshotMetaFile>) -> Result<String, String> {
 
     let first_snapshot = path.first().expect("Path should not be empty");
 
-    if first_snapshot.full_type != SnapshotFullType::Tar {
-        todo!("Not implemented: full type must be tar");
+    if first_snapshot.full_type != SnapshotFullType::TarGz {
+        todo!("Not implemented: full type must be tar.gz");
     }
 
     let mut prev_snapshot_id = first_snapshot.id.clone();
@@ -119,16 +121,20 @@ struct XDeltaPatchArgs {
 fn xdelta_patch(args: XDeltaPatchArgs) -> Result<(), String> {
     // todo: maybe xdelta3 has a better api?
     let result = io_util::run_command_handle_failures(
-        process::Command::new("xdelta")
-            .arg("patch")
-            .arg(&args.patch_file_path)
+        process::Command::new("xdelta3")
+            .env("GZIP", "-1")
+            .arg("-d")
+            .arg("-f")
+            .arg("-B500000000") // must match the buffer size when encoding
+            .arg("-s")
             .arg(&args.from_path)
+            .arg(&args.patch_file_path)
             .arg(&args.output_path),
     );
 
     if result.is_err() {
-        eprintln!("Warn: xdelta exited badly");
+        Err(String::from("xdelta3 exited badly"))
+    } else {
+        Ok(())
     }
-
-    Ok(())
 }

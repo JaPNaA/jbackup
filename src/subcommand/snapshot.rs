@@ -60,12 +60,12 @@ pub fn main(mut args: VecDeque<String>) -> Result<(), String> {
         }
         Some(curr_snapshot_id) => {
             let mut curr_snapshot_meta = file_structure::SnapshotMetaFile::read(&curr_snapshot_id)?;
-            if curr_snapshot_meta.full_type != file_structure::SnapshotFullType::Tar {
-                todo!("Not implemented: Current snapshot is not a tar snapshot type");
+            if curr_snapshot_meta.full_type != file_structure::SnapshotFullType::TarGz {
+                todo!("Not implemented: Current snapshot is not a tar.gz snapshot type");
             }
 
-            if staged_snapshot.full_type != file_structure::SnapshotFullType::Tar {
-                todo!("Not implemented: Staged snapshot is not a tar snapshot type");
+            if staged_snapshot.full_type != file_structure::SnapshotFullType::TarGz {
+                todo!("Not implemented: Staged snapshot is not a tar.gz snapshot type");
             }
 
             // add parent-child relations for staged snapshot
@@ -158,7 +158,7 @@ fn create_full_snapshot() -> Result<file_structure::SnapshotMetaFile, String> {
 
     let snapshot_metadata = file_structure::SnapshotMetaFile {
         id: id.clone(),
-        full_type: file_structure::SnapshotFullType::Tar,
+        full_type: file_structure::SnapshotFullType::TarGz,
         date: timestamp,
         message: None,
         children: Vec::new(),
@@ -282,20 +282,26 @@ fn create_xdelta(args: CreateXDeltaArgs) -> Result<(), String> {
     let to_path = String::from(SNAPSHOTS_PATH) + "/" + args.to_archive;
     let output_path = String::from(SNAPSHOTS_PATH) + "/" + args.output_archive;
 
+    eprintln!("Creating xdelta... from: {}, to: {}", from_path, to_path);
+
     // todo: maybe xdelta3 has a better api?
     let result = io_util::run_command_handle_failures(
-        process::Command::new("xdelta")
-            .arg("delta")
+        process::Command::new("xdelta3")
+            .arg("-S")
+            .arg("djw")
+            .arg("-f")
+            .arg("-B500000000")
+            .arg("-s")
             .arg(&from_path)
             .arg(&to_path)
             .arg(&output_path),
     );
 
     if result.is_err() {
-        eprintln!("Warn: xdelta exited badly");
+        Err(String::from("xdelta3 exited badly"))
+    } else {
+        Ok(())
     }
-
-    Ok(())
 }
 
 fn commit_tmp_snapshot(
