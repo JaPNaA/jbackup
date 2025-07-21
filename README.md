@@ -1,14 +1,28 @@
-# xdelta backups
+# jbackup
 
-This repository contains a Rust script that manages compressed directory backups using `tar` and `xdelta`.
+jbackup is a program that manages compressed directory backups using `tar` and `xdelta3`.
 
 The original use is to compress backups of Minecraft world saves, however, the script should work for all `tar`-able directories.
 
+## Installing
+
+### Compatibility
+
+At the moment, the tool is only tested on Ubuntu. The author believes the program should be compatible with all Unix systems.
+
+### Dependencies
+
+The program requires `xdelta3` in PATH. `xdelta3` can be installed on Ubuntu with `apt install xdelta3`.
+
+### Compiling from source
+
+After installing Rust, run `cargo build --release` to produce the executable `target/release/jbackup`. This is the only file required and can be moved anywhere you find convenient.
+
 ## Usage
 
-The script may be placed anywhere. This section assumes `jbackup` is in your path for convience.
+`jbackup` may be placed anywhere. This section assumes `jbackup` is in PATH for convience.
 
-If you don't plan to use `jbackup` for more directories, you can put `jbackup` under a new directory called `.jbackup` directly under the directory you wish to backup.
+If you don't plan to use `jbackup` for more directories, you can put `jbackup` under a new directory called `.jbackup` directly under the directory you wish to backup. (i.e, `cd myFiles; mkdir .jbackup; mv /path/to/jbackup .jbackup; .jbackup/jbackup init`)
 
 ### Initialization
 
