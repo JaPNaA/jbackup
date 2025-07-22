@@ -7,13 +7,7 @@ mod util;
 
 use std::{
     env::{self, Args},
-    fs,
     process::ExitCode,
-};
-
-use crate::{
-    transformer::get_transformer,
-    util::{io_util::simplify_result, multithreaded_pipeline},
 };
 
 pub const JBACKUP_PATH: &str = "./.jbackup";

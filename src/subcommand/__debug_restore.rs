@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     fs::{self, File},
     io::{BufReader, Read},
     process,
@@ -88,6 +88,7 @@ pub fn main2(mut args: VecDeque<String>) -> Result<(), String> {
     let archive_file = simplify_result(File::open(archive_path))?;
     let gzdec = GzDecoder::new(BufReader::new(archive_file));
     let mut tar_reader = tar::Archive::new(gzdec);
+    let mut dir_tree_builder = DirectoryTreeBuilder::new();
 
     for entry in simplify_result(tar_reader.entries())? {
         let mut entry = match entry {
@@ -112,10 +113,12 @@ pub fn main2(mut args: VecDeque<String>) -> Result<(), String> {
             curr = transformer.transform_out(&path, curr)?;
         }
 
-        simplify_result(fs::write(
-            String::from(".jbackup/tmp-restored/") + &path.replace("/", "-"),
-            curr,
-        ))?;
+        let output_path = String::from(".jbackup/tmp-restored/") + &path;
+        let parent_dir_path = dir_name(&output_path);
+
+        dir_tree_builder.prepare_dir(&parent_dir_path)?;
+
+        simplify_result(fs::write(output_path, curr))?;
     }
 
     Ok(())
@@ -187,6 +190,65 @@ fn xdelta_patch(args: XDeltaPatchArgs) -> Result<(), String> {
     if result.is_err() {
         Err(String::from("xdelta3 exited badly"))
     } else {
+        Ok(())
+    }
+}
+
+fn dir_name(path: &str) -> String {
+    let mut clean_path = path;
+    if path.ends_with('/') {
+        clean_path = &path[0..path.len() - 1];
+    }
+
+    let idx = clean_path.rfind("/");
+    String::from(match idx {
+        None => "",
+        Some(x) => &clean_path[0..x],
+    })
+}
+
+fn all_parent_directories(path: &str) -> Vec<String> {
+    let mut parent_dirs = Vec::new();
+
+    for (i, _slice) in path.match_indices("/") {
+        if i == 0 {
+            continue;
+        } // don't split at leading '/'
+        if i >= path.len() - 1 {
+            continue;
+        } // don't split at tailing '/'
+        parent_dirs.push(String::from(&path[0..i]));
+    }
+
+    parent_dirs
+}
+
+/// Given directory tree specified by a collection of paths,
+/// performs the minimum amount of `mkdir` syscalls to construct the directory
+/// tree.
+struct DirectoryTreeBuilder(HashSet<String>);
+
+impl DirectoryTreeBuilder {
+    pub fn new() -> DirectoryTreeBuilder {
+        DirectoryTreeBuilder(HashSet::new())
+    }
+
+    pub fn prepare_dir(&mut self, dir_path: &str) -> Result<(), String> {
+        let dir_path = String::from(dir_path);
+        if self.0.contains(&dir_path) {
+            return Ok(());
+        }
+
+        simplify_result(fs::create_dir_all(&dir_path))?;
+
+        let all_parents = all_parent_directories(&dir_path);
+
+        self.0.insert(dir_path);
+
+        for parent in all_parents {
+            self.0.insert(parent);
+        }
+
         Ok(())
     }
 }
