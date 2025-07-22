@@ -6,6 +6,7 @@ use std::{
 };
 
 use flate2::bufread::GzDecoder;
+use tar::EntryType;
 
 use crate::{
     JBACKUP_PATH, SNAPSHOTS_PATH,
@@ -105,6 +106,16 @@ pub fn main2(mut args: VecDeque<String>) -> Result<(), String> {
                 continue;
             }
         };
+
+        if entry.header().entry_type() != EntryType::Regular {
+            eprintln!(
+                "Warn: Ignoring item: '{}' since it's not a regular file",
+                &path
+            );
+            continue;
+        }
+
+        validate_no_parent_references(&path)?;
 
         let mut curr = Vec::new();
         simplify_result(entry.read_to_end(&mut curr))?;
@@ -221,6 +232,18 @@ fn all_parent_directories(path: &str) -> Vec<String> {
     }
 
     parent_dirs
+}
+
+/// Validate the path does not contain any ".." directories.
+/// We should refuse to extract these files.
+fn validate_no_parent_references(path: &str) -> Result<(), String> {
+    if path.split("/").any(|x| x == "..") {
+        return Err(format!(
+            "Archive entry has path '{}', which attempts to reference a parent directory. The archive may be malicious, so extraction was canceled.",
+            path
+        ));
+    }
+    Ok(())
 }
 
 /// Given directory tree specified by a collection of paths,
