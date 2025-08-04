@@ -191,7 +191,7 @@ fn xdelta_patch(args: XDeltaPatchArgs) -> Result<(), String> {
             .env("GZIP", "-1")
             .arg("-d")
             .arg("-f")
-            .arg("-B500000000") // must match the buffer size when encoding
+            .arg("-B2147483648") // must match the buffer size when encoding
             .arg("-s")
             .arg(&args.from_path)
             .arg(&args.patch_file_path)

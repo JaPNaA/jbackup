@@ -275,7 +275,7 @@ fn create_xdelta(args: CreateXDeltaArgs) -> Result<(), String> {
             .arg("-S")
             .arg("djw")
             .arg("-f")
-            .arg("-B500000000")
+            .arg("-B2147483648")
             .arg("-s")
             .arg(&from_path)
             .arg(&to_path)
