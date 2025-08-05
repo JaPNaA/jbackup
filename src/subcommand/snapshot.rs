@@ -310,6 +310,8 @@ fn commit_tmp_snapshot(
 
 /// Walks the file tree for some directory.
 ///
+/// The paths visited are always in UTF-8 ascending order.
+///
 /// Ignores .jbackup directories that are a direct child of
 /// the specified directory.
 pub fn walk_file_tree(
@@ -319,6 +321,11 @@ pub fn walk_file_tree(
     _walk_file_tree(dir_path, 0, file_handler)
 }
 
+enum FileType {
+    Regular,
+    Directory,
+}
+
 fn _walk_file_tree(
     dir_path: OsString,
     depth: usize,
@@ -326,7 +333,6 @@ fn _walk_file_tree(
 ) -> Result<(), String> {
     let files = simplify_result(fs::read_dir(&dir_path))?;
     let mut sorted_files = Vec::new();
-    let mut sorted_directories = Vec::new();
 
     for file in files {
         match file {
@@ -348,10 +354,10 @@ fn _walk_file_tree(
                 }
                 Ok(file_type) => {
                     if file_type.is_file() {
-                        sorted_files.push(file.file_name())
+                        sorted_files.push((FileType::Regular, file.file_name()))
                     } else if file_type.is_dir() {
                         if depth != 0 || file.file_name() != ".jbackup" {
-                            sorted_directories.push(file.file_name())
+                            sorted_files.push((FileType::Directory, file.file_name()));
                         }
                     }
                 }
@@ -359,22 +365,20 @@ fn _walk_file_tree(
         }
     }
 
-    sorted_files.sort();
+    sorted_files.sort_by(|a, b| a.1.cmp(&b.1));
 
-    for file in sorted_files {
+    for (file_type, file) in sorted_files {
         let mut path = dir_path.clone();
         path.push("/");
         path.push(file);
-        file_handler(path)?;
-    }
-
-    sorted_directories.sort();
-
-    for file in sorted_directories {
-        let mut path = dir_path.clone();
-        path.push("/");
-        path.push(file);
-        _walk_file_tree(path, depth + 1, file_handler)?;
+        match file_type {
+            FileType::Regular => {
+                file_handler(path)?;
+            }
+            FileType::Directory => {
+                _walk_file_tree(path, depth + 1, file_handler)?;
+            }
+        };
     }
 
     Ok(())

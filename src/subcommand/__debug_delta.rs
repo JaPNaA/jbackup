@@ -47,8 +47,6 @@ pub fn main(mut args: VecDeque<String>) -> Result<(), String> {
                 let end_path = end_path.to_string_lossy();
 
                 if start_path == end_path {
-                    println!("{} / {}", start_path, end_path);
-
                     let start_path = String::from(start_path);
 
                     let mut start_buf = Vec::new();
@@ -58,17 +56,12 @@ pub fn main(mut args: VecDeque<String>) -> Result<(), String> {
                     simplify_result(end_entry_uw.read_to_end(&mut end_buf))?;
 
                     if let Some(res) = xdelta3::encode(&end_buf, &start_buf) {
-                        eprintln!(
-                            "Generated delta for {} with size: {}",
-                            &start_path,
-                            res.len()
-                        );
                         delta_list.add(JBackupDelta {
                             path: start_path,
                             content: JBackupDeltaContent::Modified { xdelta: res },
                         })?;
                     } else {
-                        eprintln!("No xdelta output for {}", &start_path);
+                        eprintln!("Warn: no xdelta output for {}", &start_path);
                     }
 
                     start_entry = start_entries.next();
@@ -154,7 +147,7 @@ pub fn inverse(mut args: VecDeque<String>) -> Result<(), String> {
     let delta_list_file = simplify_result(File::open(delta_list_filename))?;
 
     let start_dec = GzDecoder::new(BufReader::new(start_file));
-    let end_enc = GzBuilder::new().write(end_file, Compression::default());
+    let end_enc = GzBuilder::new().write(end_file, Compression::fast());
     let output_dec = GzDecoder::new(BufReader::new(delta_list_file));
     let mut delta_list = JBackupFileDeltaListReader::new(output_dec)?;
 
@@ -176,14 +169,15 @@ pub fn inverse(mut args: VecDeque<String>) -> Result<(), String> {
                 if start_path == delta_path {
                     match delta_entry_uw.content {
                         JBackupDeltaContent::Modified { xdelta } => {
-                            println!("Applying delta to {}", start_path);
-
                             let mut start_buf = Vec::new();
                             simplify_result(start_entry_uw.read_to_end(&mut start_buf))?;
 
                             if let Some(res) = xdelta3::decode(&xdelta, &start_buf) {
+                                let mut header = start_entry_uw.header().clone();
+                                header.set_size(res.len().try_into().unwrap());
+
                                 simplify_result(end_tar.append_data(
-                                    &mut start_entry_uw.header().clone(),
+                                    &mut header,
                                     start_path,
                                     res.as_slice(),
                                 ))?;
@@ -313,8 +307,8 @@ struct JBackupFileDeltaListWriter {
 
 impl JBackupFileDeltaListWriter {
     pub fn new(mut writer: GzEncoder<File>) -> Result<Self, String> {
-        simplify_result(writer.write("DL".as_bytes()))?;
-        simplify_result(writer.write(&1u32.to_be_bytes()))?;
+        simplify_result(writer.write_all("DL".as_bytes()))?;
+        simplify_result(writer.write_all(&1u32.to_be_bytes()))?;
         Ok(JBackupFileDeltaListWriter { writer })
     }
 
@@ -324,14 +318,14 @@ impl JBackupFileDeltaListWriter {
 
         match delta.content {
             JBackupDeltaContent::Deleted {} => {
-                simplify_result(self.writer.write(&[1]))?;
+                simplify_result(self.writer.write_all(&[1]))?;
             }
             JBackupDeltaContent::Modified { xdelta } => {
-                simplify_result(self.writer.write(&[2]))?;
+                simplify_result(self.writer.write_all(&[2]))?;
                 self.add_bytes(&xdelta)?;
             }
             JBackupDeltaContent::Added { content } => {
-                simplify_result(self.writer.write(&[3]))?;
+                simplify_result(self.writer.write_all(&[3]))?;
                 self.add_bytes(&content)?;
             }
         };
@@ -351,9 +345,9 @@ impl JBackupFileDeltaListWriter {
     fn add_bytes(&mut self, bytes: &[u8]) -> Result<(), String> {
         simplify_result(
             self.writer
-                .write(&u64::try_from(bytes.len()).unwrap().to_be_bytes()),
+                .write_all(&u64::try_from(bytes.len()).unwrap().to_be_bytes()),
         )?;
-        simplify_result(self.writer.write(bytes))?;
+        simplify_result(self.writer.write_all(bytes))?;
         Ok(())
     }
 }
@@ -389,8 +383,6 @@ impl JBackupFileDeltaListReader {
         let Ok(path) = self.read_string() else {
             return Ok(None);
         };
-
-        println!("Reading path: {}", path);
 
         let op_type = self.read_u8()?;
 
