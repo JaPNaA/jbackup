@@ -97,6 +97,10 @@ fn run_with_arguments(args_iter: Args) -> Result<(), String> {
             Err(err) => Err(format!("Failed to compute delta: {err}")),
             Ok(_) => Ok(()),
         },
+        "__debug_patch" => match subcommand::__debug_delta::inverse(args.normal) {
+            Err(err) => Err(format!("Failed to compute delta: {err}")),
+            Ok(_) => Ok(()),
+        },
 
         _ => Err(format!("Error: unknown command '{}'", command)),
     }
