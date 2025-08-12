@@ -4,6 +4,18 @@ jbackup is a program that manages compressed directory backups using `tar` and `
 
 The original use is to compress backups of Minecraft world saves, however, the script should work for most directories.
 
+jbackup is under development, however, the version of jbackup on the master branch should be capable of performing the basic operations.
+
+## Performance
+
+### Minecraft
+
+In a multiplayer world with 3 active players, I made 15 backups over 2 months from the start of the world. The first backup was 163.6MB. The last backup was 1.3GB.
+
+- When compressing all backups with ZIP, Deflate (fastest), the total backup size was 8.4GB.
+- jbackup stores all snapshots in 1.8GB (**467%** compression).
+  - Each delta only averages **27.6MB** -- meaning that, in this case, each new snapshot takes `change in world size + 27.6mb` more bytes to store on average.
+
 ## Installing
 
 ### Compatibility
