@@ -37,7 +37,7 @@ pub fn generate_delta_list(
                             content: JBackupDeltaContent::Modified { xdelta: res },
                         })?;
                     } else {
-                        eprintln!("Warn: no xdelta output for {}", &start_path);
+                        // eprintln!("Warn: no xdelta output for {}", &start_path);
                     }
 
                     start_entry = start_entries.next();
@@ -121,7 +121,8 @@ pub fn restore_from_delta_list(
                             if let Some(res) = xdelta3::decode(&xdelta, &start_buf) {
                                 add_tar_entry(&mut end_tar, &start_path, res)?;
                             } else {
-                                eprintln!("No xdelta output for {}", &start_path);
+                                add_tar_entry(&mut end_tar, &start_path, start_buf)?;
+                                // eprintln!("Warn: No xdelta output for {}", &start_path);
                             }
                         }
                         JBackupDeltaContent::Deleted => {
