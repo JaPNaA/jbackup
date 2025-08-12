@@ -1,4 +1,5 @@
 mod arguments;
+mod delta_list;
 mod file_structure;
 mod subcommand;
 mod tab_separated_key_value;
@@ -93,15 +94,10 @@ fn run_with_arguments(args_iter: Args) -> Result<(), String> {
             Ok(_) => Ok(()),
         },
 
-        "__debug_delta" => match subcommand::__debug_delta::main(args.normal) {
-            Err(err) => Err(format!("Failed to compute delta: {err}")),
-            Ok(_) => Ok(()),
-        },
-        "__debug_patch" => match subcommand::__debug_delta::inverse(args.normal) {
-            Err(err) => Err(format!("Failed to compute delta: {err}")),
-            Ok(_) => Ok(()),
-        },
-
         _ => Err(format!("Error: unknown command '{}'", command)),
     }
+}
+
+pub fn prepend_snapshot_path(path: &str) -> String {
+    String::from(SNAPSHOTS_PATH) + "/" + &path
 }

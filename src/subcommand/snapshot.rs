@@ -15,9 +15,12 @@ use gzp::{
 
 use crate::{
     JBACKUP_PATH, SNAPSHOTS_PATH, arguments,
+    delta_list::generate_delta_list,
     file_structure::{self, ConfigFile},
+    prepend_snapshot_path,
     transformer::get_transformers,
     util::{
+        archive_utils::{create_delta_list, open_tar_gz},
         io_util::{self, simplify_result},
         multithreaded_pipeline::MultithreadPipeline,
     },
@@ -75,12 +78,15 @@ pub fn main(mut args: VecDeque<String>) -> Result<(), String> {
             // create diff
             let curr_snapshot_payload_full_name = curr_snapshot_meta.get_full_payload_filename()?;
 
-            create_xdelta(CreateXDeltaArgs {
-                from_archive: &(staged_snapshot.get_full_payload_filename()?),
-                to_archive: &curr_snapshot_payload_full_name,
-                output_archive: &curr_snapshot_meta
-                    .get_diff_path_from_child_snapshot(&staged_snapshot.id),
-            })?;
+            generate_delta_list(
+                open_tar_gz(&prepend_snapshot_path(
+                    &staged_snapshot.get_full_payload_filename()?,
+                ))?,
+                open_tar_gz(&prepend_snapshot_path(&curr_snapshot_payload_full_name))?,
+                create_delta_list(&prepend_snapshot_path(
+                    &curr_snapshot_meta.get_diff_path_from_child_snapshot(&staged_snapshot.id),
+                ))?,
+            )?;
 
             curr_snapshot_meta
                 .diff_children
@@ -253,39 +259,6 @@ fn calc_md5(file_path: &str) -> Result<String, String> {
         None => Err(String::from(
             "md5sum did not output in the expected format.",
         )),
-    }
-}
-
-struct CreateXDeltaArgs<'a> {
-    from_archive: &'a str,
-    to_archive: &'a str,
-    output_archive: &'a str,
-}
-
-fn create_xdelta(args: CreateXDeltaArgs) -> Result<(), String> {
-    let from_path = String::from(SNAPSHOTS_PATH) + "/" + args.from_archive;
-    let to_path = String::from(SNAPSHOTS_PATH) + "/" + args.to_archive;
-    let output_path = String::from(SNAPSHOTS_PATH) + "/" + args.output_archive;
-
-    eprintln!("Creating xdelta... from: {}, to: {}", from_path, to_path);
-
-    // todo: maybe xdelta3 has a better api?
-    let result = io_util::run_command_handle_failures(
-        process::Command::new("xdelta3")
-            .arg("-S")
-            .arg("djw")
-            .arg("-f")
-            .arg("-B2147483648")
-            .arg("-s")
-            .arg(&from_path)
-            .arg(&to_path)
-            .arg(&output_path),
-    );
-
-    if result.is_err() {
-        Err(String::from("xdelta3 exited badly"))
-    } else {
-        Ok(())
     }
 }
 

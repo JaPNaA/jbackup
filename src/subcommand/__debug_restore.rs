@@ -2,17 +2,21 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     fs::{self, File},
     io::{BufReader, Read},
-    process,
 };
 
 use flate2::bufread::GzDecoder;
 use tar::EntryType;
 
 use crate::{
-    JBACKUP_PATH, SNAPSHOTS_PATH,
+    JBACKUP_PATH,
+    delta_list::restore_from_delta_list,
     file_structure::{self, ConfigFile, SnapshotFullType, SnapshotMetaFile},
+    prepend_snapshot_path,
     transformer::get_transformers,
-    util::io_util::{self, simplify_result},
+    util::{
+        archive_utils::{create_tar_gz, open_delta_list, open_tar_gz},
+        io_util::simplify_result,
+    },
 };
 
 pub fn main(mut args: VecDeque<String>) -> Result<(), String> {
@@ -148,20 +152,19 @@ fn follow_path(path: Vec<SnapshotMetaFile>) -> Result<String, String> {
     }
 
     let mut prev_snapshot_id = first_snapshot.id.clone();
-    let mut prev_tar_path =
-        String::from(SNAPSHOTS_PATH) + "/" + &first_snapshot.get_full_payload_filename()?;
+    let mut prev_tar_path = prepend_snapshot_path(&first_snapshot.get_full_payload_filename()?);
     let mut delete_prev_tar_path = false; // don't delete first
 
     for next_snapshot in path.iter().skip(1) {
         let new_tar_path = String::from(JBACKUP_PATH) + "/tmp-restored-" + &next_snapshot.id;
 
-        xdelta_patch(XDeltaPatchArgs {
-            from_path: prev_tar_path.clone(),
-            patch_file_path: String::from(SNAPSHOTS_PATH)
-                + "/"
-                + &next_snapshot.get_diff_path_from_child_snapshot(&prev_snapshot_id),
-            output_path: new_tar_path.clone(),
-        })?;
+        restore_from_delta_list(
+            open_tar_gz(&prev_tar_path)?,
+            create_tar_gz(&new_tar_path)?,
+            open_delta_list(&prepend_snapshot_path(
+                &next_snapshot.get_diff_path_from_child_snapshot(&prev_snapshot_id),
+            ))?,
+        )?;
 
         eprintln!("Restored {}", &new_tar_path);
 
@@ -176,33 +179,6 @@ fn follow_path(path: Vec<SnapshotMetaFile>) -> Result<String, String> {
     }
 
     return Ok(prev_tar_path);
-}
-
-struct XDeltaPatchArgs {
-    from_path: String,
-    patch_file_path: String,
-    output_path: String,
-}
-
-fn xdelta_patch(args: XDeltaPatchArgs) -> Result<(), String> {
-    // todo: maybe xdelta3 has a better api?
-    let result = io_util::run_command_handle_failures(
-        process::Command::new("xdelta3")
-            .env("GZIP", "-1")
-            .arg("-d")
-            .arg("-f")
-            .arg("-B2147483648") // must match the buffer size when encoding
-            .arg("-s")
-            .arg(&args.from_path)
-            .arg(&args.patch_file_path)
-            .arg(&args.output_path),
-    );
-
-    if result.is_err() {
-        Err(String::from("xdelta3 exited badly"))
-    } else {
-        Ok(())
-    }
 }
 
 fn dir_name(path: &str) -> String {

@@ -1,37 +1,20 @@
 use std::{
-    collections::VecDeque,
     fs::File,
     io::{BufReader, ErrorKind, Read, Write},
 };
 
-use flate2::{GzBuilder, bufread::GzDecoder, write::GzEncoder};
-use gzp::Compression;
+use flate2::{bufread::GzDecoder, write::GzEncoder};
 
-use crate::util::io_util::simplify_result;
+use crate::util::{
+    archive_utils::{TarReader, TarWriter},
+    io_util::simplify_result,
+};
 
-pub fn main(mut args: VecDeque<String>) -> Result<(), String> {
-    let Some(start_filename) = args.pop_front() else {
-        return Err(String::from("Must provide start file"));
-    };
-    let Some(end_filename) = args.pop_front() else {
-        return Err(String::from("Must provide ending file"));
-    };
-    let Some(output_filename) = args.pop_front() else {
-        return Err(String::from("Must provide output file"));
-    };
-
-    let start_file = simplify_result(File::open(start_filename))?;
-    let end_file = simplify_result(File::open(end_filename))?;
-    let output_file = simplify_result(File::create(output_filename))?;
-
-    let start_dec = GzDecoder::new(BufReader::new(start_file));
-    let end_dec = GzDecoder::new(BufReader::new(end_file));
-    let output_builder = GzBuilder::new().write(output_file, Compression::default()); // todo: probably don't need global compression, since xdelta output might already be compressed
-    let mut delta_list = JBackupFileDeltaListWriter::new(output_builder)?;
-
-    let mut start_tar = tar::Archive::new(start_dec);
-    let mut end_tar = tar::Archive::new(end_dec);
-
+pub fn generate_delta_list(
+    mut start_tar: TarReader,
+    mut end_tar: TarReader,
+    mut delta_list: JBackupFileDeltaListWriter,
+) -> Result<(), String> {
     let mut start_entries = simplify_result(start_tar.entries())?;
     let mut end_entries = simplify_result(end_tar.entries())?;
 
@@ -41,19 +24,12 @@ pub fn main(mut args: VecDeque<String>) -> Result<(), String> {
     loop {
         match (start_entry.take(), end_entry.take()) {
             (Some(Ok(mut start_entry_uw)), Some(Ok(mut end_entry_uw))) => {
-                let start_path = simplify_result(start_entry_uw.path())?;
-                let start_path = start_path.to_string_lossy();
-                let end_path = simplify_result(end_entry_uw.path())?;
-                let end_path = end_path.to_string_lossy();
+                let start_path = get_entry_path(&start_entry_uw)?;
+                let end_path = get_entry_path(&end_entry_uw)?;
 
                 if start_path == end_path {
-                    let start_path = String::from(start_path);
-
-                    let mut start_buf = Vec::new();
-                    simplify_result(start_entry_uw.read_to_end(&mut start_buf))?;
-
-                    let mut end_buf = Vec::new();
-                    simplify_result(end_entry_uw.read_to_end(&mut end_buf))?;
+                    let start_buf = get_entry_data(&mut start_entry_uw)?;
+                    let end_buf = get_entry_data(&mut end_entry_uw)?;
 
                     if let Some(res) = xdelta3::encode(&end_buf, &start_buf) {
                         delta_list.add(JBackupDelta {
@@ -75,9 +51,8 @@ pub fn main(mut args: VecDeque<String>) -> Result<(), String> {
                     start_entry = start_entries.next();
                     end_entry = Some(Ok(end_entry_uw));
                 } else {
-                    let mut buf = Vec::new();
-                    let end_path = end_path.to_string();
-                    simplify_result(end_entry_uw.read_to_end(&mut buf))?;
+                    let buf = get_entry_data(&mut end_entry_uw)?;
+
                     delta_list.add(JBackupDelta {
                         path: end_path,
                         content: JBackupDeltaContent::Added { content: buf },
@@ -88,12 +63,8 @@ pub fn main(mut args: VecDeque<String>) -> Result<(), String> {
                 }
             }
             (Some(Ok(start_entry_uw)), None) => {
-                // todo: duplicated code
-                let start_path = simplify_result(start_entry_uw.path())?;
-                let start_path = start_path.to_string_lossy();
-
                 delta_list.add(JBackupDelta {
-                    path: start_path.to_string(),
+                    path: get_entry_path(&start_entry_uw)?,
                     content: JBackupDeltaContent::Deleted,
                 })?;
 
@@ -101,15 +72,10 @@ pub fn main(mut args: VecDeque<String>) -> Result<(), String> {
             }
 
             (None, Some(Ok(mut end_entry_uw))) => {
-                // todo: duplicated code
-                let end_path = simplify_result(end_entry_uw.path())?;
-                let end_path = end_path.to_string_lossy();
+                let buf = get_entry_data(&mut end_entry_uw)?;
 
-                let mut buf = Vec::new();
-                let end_path = end_path.to_string();
-                simplify_result(end_entry_uw.read_to_end(&mut buf))?;
                 delta_list.add(JBackupDelta {
-                    path: end_path,
+                    path: get_entry_path(&end_entry_uw)?,
                     content: JBackupDeltaContent::Added { content: buf },
                 })?;
 
@@ -131,29 +97,11 @@ pub fn main(mut args: VecDeque<String>) -> Result<(), String> {
     Ok(())
 }
 
-pub fn inverse(mut args: VecDeque<String>) -> Result<(), String> {
-    let Some(start_filename) = args.pop_front() else {
-        return Err(String::from("Must provide start file"));
-    };
-    let Some(end_filename) = args.pop_front() else {
-        return Err(String::from("Must provide ending file"));
-    };
-    let Some(delta_list_filename) = args.pop_front() else {
-        return Err(String::from("Must provide output file"));
-    };
-
-    let start_file = simplify_result(File::open(start_filename))?;
-    let end_file = simplify_result(File::create(end_filename))?;
-    let delta_list_file = simplify_result(File::open(delta_list_filename))?;
-
-    let start_dec = GzDecoder::new(BufReader::new(start_file));
-    let end_enc = GzBuilder::new().write(end_file, Compression::fast());
-    let output_dec = GzDecoder::new(BufReader::new(delta_list_file));
-    let mut delta_list = JBackupFileDeltaListReader::new(output_dec)?;
-
-    let mut start_tar = tar::Archive::new(start_dec);
-    let mut end_tar = tar::Builder::new(end_enc);
-
+pub fn restore_from_delta_list(
+    mut start_tar: TarReader,
+    mut end_tar: TarWriter,
+    mut delta_list: JBackupFileDeltaListReader,
+) -> Result<(), String> {
     let mut start_entries = simplify_result(start_tar.entries())?;
     let mut start_entry = start_entries.next();
 
@@ -162,25 +110,16 @@ pub fn inverse(mut args: VecDeque<String>) -> Result<(), String> {
     loop {
         match (start_entry.take(), delta_entry.take()) {
             (Some(Ok(mut start_entry_uw)), Some(delta_entry_uw)) => {
-                let start_path = simplify_result(start_entry_uw.path())?;
-                let start_path = start_path.to_string_lossy().to_string();
+                let start_path = get_entry_path(&start_entry_uw)?;
                 let delta_path = delta_entry_uw.path.clone();
 
                 if start_path == delta_path {
                     match delta_entry_uw.content {
                         JBackupDeltaContent::Modified { xdelta } => {
-                            let mut start_buf = Vec::new();
-                            simplify_result(start_entry_uw.read_to_end(&mut start_buf))?;
+                            let start_buf = get_entry_data(&mut start_entry_uw)?;
 
                             if let Some(res) = xdelta3::decode(&xdelta, &start_buf) {
-                                let mut header = start_entry_uw.header().clone();
-                                header.set_size(res.len().try_into().unwrap());
-
-                                simplify_result(end_tar.append_data(
-                                    &mut header,
-                                    start_path,
-                                    res.as_slice(),
-                                ))?;
+                                add_tar_entry(&mut end_tar, &start_path, res)?;
                             } else {
                                 eprintln!("No xdelta output for {}", &start_path);
                             }
@@ -215,14 +154,7 @@ pub fn inverse(mut args: VecDeque<String>) -> Result<(), String> {
                         ));
                     };
 
-                    let mut header = tar::Header::new_gnu();
-                    header.set_size(content.len().try_into().unwrap());
-
-                    simplify_result(end_tar.append_data(
-                        &mut header,
-                        delta_entry_uw.path,
-                        content.as_slice(),
-                    ))?;
+                    add_tar_entry(&mut end_tar, &delta_entry_uw.path, content)?;
 
                     start_entry = Some(Ok(start_entry_uw));
                     delta_entry = delta_list.next()?;
@@ -230,9 +162,7 @@ pub fn inverse(mut args: VecDeque<String>) -> Result<(), String> {
             }
 
             (Some(Ok(start_entry_uw)), None) => {
-                // todo: duplicated code
-                let start_path = simplify_result(start_entry_uw.path())?;
-                let start_path = start_path.to_string_lossy().to_string();
+                let start_path = get_entry_path(&start_entry_uw)?;
 
                 simplify_result(end_tar.append_data(
                     &mut start_entry_uw.header().clone(),
@@ -244,7 +174,6 @@ pub fn inverse(mut args: VecDeque<String>) -> Result<(), String> {
             }
 
             (None, Some(delta_entry_uw)) => {
-                // todo: duplicated code
                 let end_path = delta_entry_uw.path;
 
                 let JBackupDeltaContent::Added { content } = delta_entry_uw.content else {
@@ -254,10 +183,7 @@ pub fn inverse(mut args: VecDeque<String>) -> Result<(), String> {
                     ));
                 };
 
-                let mut header = tar::Header::new_gnu();
-                header.set_size(content.len().try_into().unwrap());
-
-                simplify_result(end_tar.append_data(&mut header, end_path, content.as_slice()))?;
+                add_tar_entry(&mut end_tar, &end_path, content)?;
 
                 delta_entry = delta_list.next()?;
             }
@@ -271,6 +197,33 @@ pub fn inverse(mut args: VecDeque<String>) -> Result<(), String> {
 
     simplify_result(end_tar.into_inner())?;
 
+    Ok(())
+}
+
+fn get_entry_path(entry: &tar::Entry<'_, GzDecoder<BufReader<File>>>) -> Result<String, String> {
+    if let Some(s) = simplify_result(entry.path())?.to_str() {
+        Ok(String::from(s))
+    } else {
+        Err(String::from("Tar entry contains non-UTF-8 characters."))
+    }
+}
+
+fn get_entry_data(
+    entry: &mut tar::Entry<'_, GzDecoder<BufReader<File>>>,
+) -> Result<Vec<u8>, String> {
+    let mut buf = Vec::new();
+    simplify_result(entry.read_to_end(&mut buf))?;
+    Ok(buf)
+}
+
+fn add_tar_entry(
+    archive: &mut tar::Builder<GzEncoder<File>>,
+    path: &str,
+    content: Vec<u8>,
+) -> Result<(), String> {
+    let mut header = tar::Header::new_gnu();
+    header.set_size(content.len().try_into().unwrap());
+    simplify_result(archive.append_data(&mut header, path, content.as_slice()))?;
     Ok(())
 }
 
@@ -301,7 +254,7 @@ enum JBackupDeltaContent {
 ///     - [Add, content length: u64, content: byte[]]
 ///
 /// All numbers are encoded in big-endian.
-struct JBackupFileDeltaListWriter {
+pub struct JBackupFileDeltaListWriter {
     writer: GzEncoder<File>,
 }
 
@@ -313,7 +266,7 @@ impl JBackupFileDeltaListWriter {
     }
 
     /// Add a file operation to the delta list
-    pub fn add(&mut self, delta: JBackupDelta) -> Result<(), String> {
+    fn add(&mut self, delta: JBackupDelta) -> Result<(), String> {
         self.add_string(&delta.path)?;
 
         match delta.content {
@@ -352,7 +305,7 @@ impl JBackupFileDeltaListWriter {
     }
 }
 
-struct JBackupFileDeltaListReader {
+pub struct JBackupFileDeltaListReader {
     reader: GzDecoder<BufReader<File>>,
 }
 
